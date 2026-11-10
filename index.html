@@ -1,1 +1,128 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Holiday Tracker Login</title><link rel="stylesheet" href="assets/style.css"></head><body class="login"><main class="card"><h1>Company Holiday Tracker</h1><p>Sign in with your employee name and password</p><form id="login"><label>Name</label><input id="name" required autocomplete="username"><label>Password</label><input id="pw" type="password" required autocomplete="current-password"><button>Sign in</button></form><p id="message"></p><small>Forgotten password? <button type="button" class="linkbtn" onclick="resetPw()">Email me a reset link</button> (needs your email in the Name box) or contact an administrator.</small></main><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script><script src="assets/config.js"></script><script src="assets/app.js"></script><script>document.getElementById('login').onsubmit=signIn</script></body></html>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Holiday Tracker Login</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="login">
+<main class="card">
+  <h1>Company Holiday Tracker</h1>
+  <p>Sign in with your employee name and password</p>
+
+  <form id="login">
+    <label>Name</label>
+    <input id="name" required autocomplete="username">
+    <label>Password</label>
+    <input id="pw" type="password" required autocomplete="current-password">
+    <button>Sign in</button>
+  </form>
+
+  <p id="message"></p>
+
+  <small>Forgotten password?
+    <button type="button" class="linkbtn" onclick="resetPw()">Email me a reset link</button>
+    (needs your email in the Name box) or contact an administrator.
+  </small>
+
+  <hr>
+  <button type="button" id="setupBtn">Create database &amp; Admin user</button>
+  <p id="setupMsg"></p>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+document.getElementById('login').onsubmit = signIn;
+
+/* ---------- ONE-TIME SETUP ---------- */
+// Firebase Auth needs an email, so "Admin" is mapped to this address.
+// If your signIn() in app.js maps names to emails differently, change it here to match.
+const ADMIN_NAME  = 'Admin';
+const ADMIN_EMAIL = 'admin@holidaytracker.local';
+const ADMIN_PW    = '000000';
+
+document.getElementById('setupBtn').onclick = async () => {
+  const out = document.getElementById('setupMsg');
+  const btn = document.getElementById('setupBtn');
+  const log = t => out.textContent = t;
+  btn.disabled = true;
+
+  try {
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // 1. Create (or sign in as) the Admin auth user
+    log('Creating Admin user...');
+    let cred;
+    try {
+      cred = await auth.createUserWithEmailAndPassword(ADMIN_EMAIL, ADMIN_PW);
+    } catch (e) {
+      if (e.code === 'auth/email-already-in-use') {
+        cred = await auth.signInWithEmailAndPassword(ADMIN_EMAIL, ADMIN_PW);
+      } else throw e;
+    }
+    const uid = cred.user.uid;
+
+    // 2. Create the Firestore collections by writing starter documents
+    log('Creating database...');
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const year = new Date().getFullYear();
+    const batch = db.batch();
+
+    // Admin profile (keyed by auth uid)
+    batch.set(db.collection('users').doc(uid), {
+      name: ADMIN_NAME,
+      email: ADMIN_EMAIL,
+      role: 'admin',
+      active: true,
+      allowance: 25,
+      createdAt: now
+    }, { merge: true });
+
+    // Employee record for the admin
+    batch.set(db.collection('employees').doc(uid), {
+      name: ADMIN_NAME,
+      email: ADMIN_EMAIL,
+      department: '',
+      allowance: 25,
+      carryOver: 0,
+      startDate: null,
+      active: true,
+      createdAt: now
+    }, { merge: true });
+
+    // Company-wide settings
+    batch.set(db.collection('settings').doc('company'), {
+      companyName: 'Company',
+      holidayYearStartMonth: 1,
+      defaultAllowance: 25,
+      currentYear: year,
+      createdAt: now
+    }, { merge: true });
+
+    // Placeholder docs so these collections exist and show in the console
+    batch.set(db.collection('requests').doc('_init'), {
+      _placeholder: true, createdAt: now
+    }, { merge: true });
+    batch.set(db.collection('bankHolidays').doc('_init'), {
+      _placeholder: true, createdAt: now
+    }, { merge: true });
+
+    await batch.commit();
+
+    await auth.signOut();
+    log('Done. Database created. Sign in with Name "' + ADMIN_NAME + '" and password "' + ADMIN_PW + '".');
+  } catch (e) {
+    console.error(e);
+    log('Setup failed: ' + (e.code || '') + ' ' + e.message);
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
