@@ -1,103 +1,55 @@
 <!doctype html>
-<html>
+<html lang="en-GB">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Holiday Tracker Login</title>
-<link rel="stylesheet" href="assets/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Holiday Tracker – Sign in</title>
+  <link rel="stylesheet" href="assets/style.css">
 </head>
-<body class="login">
-<main class="card">
-  <h1>Company Holiday Tracker</h1>
-  <p>Sign in with your employee name and password</p>
+<body class="login-page" data-page="login">
+  <main class="card login-card">
+    <h1>Company Holiday Tracker</h1>
+    <p class="lead">Sign in with your employee name and password.</p>
 
-  <form id="login">
-    <label>Name</label>
-    <input id="name" required autocomplete="username">
-    <label>Password</label>
-    <input id="pw" type="password" required autocomplete="current-password">
-    <button>Sign in</button>
-  </form>
+    <form id="login">
+      <label for="name">Name</label>
+      <input id="name" required autocomplete="username">
 
-  <p id="message"></p>
+      <label for="pw">Password</label>
+      <input id="pw" type="password" required autocomplete="current-password">
 
-  <small>Forgotten password?
-    <button type="button" class="linkbtn" onclick="resetPw()">Email me a reset link</button>
-    (needs your email in the Name box) or contact an administrator.
-  </small>
+      <button type="submit">Sign in</button>
+    </form>
 
-  <hr>
-  <button type="button" id="setupBtn">Create database &amp; Admin user</button>
-  <p id="setupMsg"></p>
-</main>
+    <p id="message" class="note" role="status" aria-live="polite"></p>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="assets/config.js"></script>
-<script src="assets/app.js"></script>
-<script>
-document.getElementById('login').onsubmit = signIn;
+    <small>
+      Forgotten your password?
+      <button type="button" class="linkbtn" data-action="resetPw">Email me a reset link</button>
+      (type your email address in the Name box), or contact an administrator.
+    </small>
 
-/* ---------- ONE-TIME SETUP (remove this block and the button once used) ---------- */
-// Uses auth, db, TS and nameToMail() from assets/app.js, so "Admin" maps to
-// admin@holiday.company.invalid exactly as the sign-in form does.
-const ADMIN_NAME = 'Admin';
-const ADMIN_PW   = '000000';
+    <!-- ONE-TIME SETUP: delete this whole <details> block once it has been run -->
+    <details class="setup">
+      <summary>First-time setup (administrators only)</summary>
+      <p class="lead">
+        Creates the Admin login, all employee logins from the Excel workbook, the 2027 rota,
+        bank holidays, settings and the holiday log in Firestore. Everyone starts with the
+        password <b>000000</b> and must choose a new one at first sign-in.
+      </p>
+      <button type="button" id="setupBtn">Create database &amp; users</button>
+      <p id="setupMsg" class="note" role="status"></p>
+      <ol id="setupLog" class="log"></ol>
+    </details>
+  </main>
 
-document.getElementById('setupBtn').onclick = async () => {
-  const btn = document.getElementById('setupBtn');
-  const log = t => { document.getElementById('setupMsg').textContent = t; };
-  btn.disabled = true;
+  <noscript><p class="note note--error">This site needs JavaScript enabled.</p></noscript>
 
-  try {
-    const email = nameToMail(ADMIN_NAME);
-
-    // 1. Create the Auth user (or sign in if it already exists)
-    log('Creating Admin login...');
-    let cred;
-    try {
-      cred = await auth.createUserWithEmailAndPassword(email, ADMIN_PW);
-    } catch (e) {
-      if (e.code === 'auth/email-already-in-use') {
-        cred = await auth.signInWithEmailAndPassword(email, ADMIN_PW);
-      } else throw e;
-    }
-    const uid = cred.user.uid;
-
-    // 2. profiles/{uid}: this is what signIn() and guard() look up
-    log('Creating profile...');
-    await db.collection('profiles').doc(uid).set({
-      displayName: ADMIN_NAME,
-      role: 'admin',
-      mustChangePassword: false,   // false so the 6-character password can log in
-      createdAt: TS()
-    }, { merge: true });
-
-    // 3. employees/{uid}: same fields addEmployee() writes
-    log('Creating employee record...');
-    await db.collection('employees').doc(uid).set({
-      userId: uid,
-      displayName: ADMIN_NAME,
-      initials: 'A',
-      department: '',
-      team: '',
-      startDate: null,
-      allowanceDays: 0,
-      carryoverDays: 0,
-      accrualDays: 0,
-      longServiceDays: 0,
-      active: true
-    }, { merge: true });
-
-    await auth.signOut();
-    log('Done. Sign in with Name "' + ADMIN_NAME + '" and password "' + ADMIN_PW + '".');
-  } catch (e) {
-    console.error(e);
-    log('Setup failed: ' + (e.code || '') + ' ' + e.message);
-    btn.disabled = false;
-  }
-};
-</script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js"></script>
+  <script src="assets/seed-data.js"></script>
+  <script src="assets/app.js"></script>
 </body>
 </html>
