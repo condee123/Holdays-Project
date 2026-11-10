@@ -1,1 +1,101 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Holiday approvals</title><link rel="stylesheet" href="assets/style.css"></head><body><header><b>Holiday Tracker · Admin</b><nav><a href="admin.html">Approvals</a><a href="employees.html">Employees</a><a href="calendar.html">Calendar</a><button onclick="logout()">Log out</button></nav></header><main><h1>Holiday approval queue</h1><section class="card"><table><thead><tr><th>Employee</th><th>Dates</th><th>Days</th><th>Reason</th><th>Decision</th></tr></thead><tbody id="pending"></tbody></table><p id="note"></p></section></main><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script><script src="assets/config.js"></script><script src="assets/app.js"></script><script>loadAdmin()</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Holiday approvals</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header>
+    <b>Holiday Tracker · Admin</b>
+    <nav>
+      <a href="admin.html" aria-current="page">Approvals</a>
+      <a href="employees.html">Employees</a>
+      <a href="calendar.html">Calendar</a>
+      <button type="button" id="logout-btn">Log out</button>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Holiday approval queue</h1>
+
+    <section class="card">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Employee</th>
+            <th scope="col">Dates</th>
+            <th scope="col">Days</th>
+            <th scope="col">Reason</th>
+            <th scope="col">Decision</th>
+          </tr>
+        </thead>
+        <tbody id="pending"></tbody>
+      </table>
+      <p id="note" class="note" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <noscript>
+    <p class="note note--error">This page needs JavaScript enabled.</p>
+  </noscript>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js"></script>
+  <script src="assets/app.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      // Change this if your sign-in page is named something else.
+      var LOGIN_PAGE = 'index.html';
+
+      var note = document.getElementById('note');
+      var logoutBtn = document.getElementById('logout-btn');
+
+      function setNote(message, isError) {
+        note.textContent = message || '';
+        note.className = isError ? 'note note--error' : 'note';
+      }
+
+      logoutBtn.addEventListener('click', function () {
+        if (typeof window.logout === 'function') {
+          window.logout();
+          return;
+        }
+        firebase.auth().signOut().catch(function (err) {
+          setNote('Log out failed: ' + err.message, true);
+        });
+      });
+
+      // Do not touch Firestore until Firebase has restored the session.
+      // If assets/app.js already calls loadAdmin() from its own
+      // onAuthStateChanged handler, delete everything below the redirect
+      // guard so the queue is not loaded twice.
+      firebase.auth().onAuthStateChanged(function (user) {
+        if (!user) {
+          window.location.replace(LOGIN_PAGE);
+          return;
+        }
+
+        if (typeof window.loadAdmin !== 'function') {
+          setNote('Cannot start the queue: loadAdmin() was not found in assets/app.js.', true);
+          return;
+        }
+
+        setNote('Loading pending requests...', false);
+
+        Promise.resolve()
+          .then(function () { return window.loadAdmin(); })
+          .catch(function (err) {
+            console.error(err);
+            setNote('Could not load the queue: ' + err.message, true);
+          });
+      });
+    })();
+  </script>
+</body>
+</html>
