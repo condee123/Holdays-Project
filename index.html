@@ -3,53 +3,52 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Holiday Tracker – Sign in</title>
+  <title>Holiday log</title>
   <link rel="stylesheet" href="assets/style.css">
 </head>
-<body class="login-page" data-page="login">
-  <main class="card login-card">
-    <h1>Company Holiday Tracker</h1>
-    <p class="lead">Sign in with your employee name and password.</p>
+<body data-page="log">
+  <header class="topbar">
+    <a class="brand" href="employee.html">Holiday Tracker</a>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
 
-    <form id="login">
-      <label for="name">Name</label>
-      <input id="name" required autocomplete="username">
+  <main>
+    <h1>Holiday log</h1>
+    <p class="lead">Quick entry for annual leave, sickness and other absence. Only <b>Annual Leave</b> entries reduce the allowance; <b>Sick Leave</b> feeds the Bradford Factor.</p>
 
-      <label for="pw">Password</label>
-      <input id="pw" type="password" required autocomplete="current-password">
+    <section class="card">
+      <h2>Add entry</h2>
+      <form id="logForm">
+        <div class="form-grid">
+          <div><label for="lemp">Employee</label><select id="lemp"></select></div>
+          <div><label for="ldate">Date</label><input id="ldate" type="date" required></div>
+          <div><label for="ltype">Leave type</label><select id="ltype"></select></div>
+          <div><label for="ldays">Days</label><input id="ldays" type="number" step="0.5" min="0.5" value="1" required></div>
+          <div class="wide"><label for="lnotes">Notes</label><input id="lnotes"></div>
+        </div>
+        <button type="submit">Add entry</button>
+        <p id="note" class="note" role="status" aria-live="polite"></p>
+      </form>
+    </section>
 
-      <button type="submit">Sign in</button>
-    </form>
-
-    <p id="message" class="note" role="status" aria-live="polite"></p>
-
-    <small>
-      Forgotten your password?
-      <button type="button" class="linkbtn" data-action="resetPw">Email me a reset link</button>
-      (type your email address in the Name box), or contact an administrator.
-    </small>
-
-    <!-- ONE-TIME SETUP: delete this whole <details> block once it has been run -->
-    <details class="setup">
-      <summary>First-time setup (administrators only)</summary>
-      <p class="lead">
-        Creates the Admin login, all employee logins from the Excel workbook, the 2027 rota,
-        bank holidays, settings and the holiday log in Firestore. Everyone starts with the
-        password <b>000000</b> and must choose a new one at first sign-in.
-      </p>
-      <button type="button" id="setupBtn">Create database &amp; users</button>
-      <p id="setupMsg" class="note" role="status"></p>
-      <ol id="setupLog" class="log"></ol>
-    </details>
+    <section class="card">
+      <div class="card-head">
+        <h2>Entries</h2>
+        <select id="lfilter" aria-label="Filter by employee"></select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Employee</th><th>Type</th><th>Days</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
-
-  <noscript><p class="note note--error">This site needs JavaScript enabled.</p></noscript>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="assets/config.js"></script>
-  <script src="assets/seed-data.js"></script>
   <script src="assets/app.js"></script>
 </body>
 </html>
