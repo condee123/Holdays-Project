@@ -196,3 +196,31 @@ dialog::backdrop { background: rgba(16, 24, 40, .5); }
   font-weight: 600;
   text-align: center;
 }
+
+/* ---------- Editable employee table, checkbox, toolbar ---------- */
+
+input[type="checkbox"] { display: inline-block; width: auto; margin: 0 8px 0 0; vertical-align: middle; }
+label.check { display: flex; align-items: center; margin: 4px 0; }
+label.check.disabled { color: #98a2b3; cursor: not-allowed; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
+
+table.editable { min-width: 1500px; }
+table.editable td, table.editable th { padding: 6px 8px; }
+.cell { margin: 0; padding: 6px 8px; min-width: 90px; }
+.cell.num { min-width: 70px; width: 80px; text-align: right; }
+tr.dirty td { background: #fff9e6; }
+tr.dirty .cell { border-color: #f5c542; }
+
+/* ---------- Date range boxes ---------- */
+
+fieldset.range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 14px;
+  margin: 0;
+  padding: 12px 16px 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+fieldset.range legend { padding: 0 6px; font-weight: 700; }
