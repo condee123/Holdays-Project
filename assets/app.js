@@ -59,6 +59,23 @@ function makeInitials(name, taken) {
   return ini;
 }
 
+// Employee records can be incomplete (older imports, hand-made documents), so every
+// read goes through this: missing names or figures never break a page.
+function normEmp(id, d) {
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const name = String(d.displayName || d.name || d.fullName || '').trim();
+  return {
+    ...d, id, displayName: name, hasName: !!name,
+    initials: d.initials || (name ? makeInitials(name, new Set()) : '?'),
+    team: d.team || '5-Day Week', department: d.department || '', startDate: d.startDate || '',
+    allowanceDays: num(d.allowanceDays), carryoverDays: num(d.carryoverDays),
+    accrualDays: num(d.accrualDays), longServiceDays: num(d.longServiceDays)
+  };
+}
+
+// Named people alphabetically, unnamed records last
+const byName = (a, b) => (a.hasName === b.hasName ? a.displayName.localeCompare(b.displayName) : a.hasName ? -1 : 1);
+
 /* ---------- click delegation (no inline onclick handlers) ---------- */
 
 const ACTIONS = {
@@ -71,6 +88,7 @@ const ACTIONS = {
   reject: el => review(el.dataset.id, 'rejected'),
   'log-delete': el => deleteLog(el.dataset.id),
   'role-toggle': el => toggleRole(el.dataset.uid, el.dataset.role),
+  'emp-remove': el => removeEmployee(el.dataset.id),
   'save-employees': saveEmployees,
   'sync-names': syncNamesClicked
 };
@@ -228,7 +246,7 @@ async function guard(opts = {}) {
   if (opts.admin && p.role !== 'admin') { location.href = 'employee.html'; return; }
 
   const eq = await db.collection('employees').where('userId', '==', user.uid).limit(1).get();
-  const emp = eq.empty ? null : { id: eq.docs[0].id, ...eq.docs[0].data() };
+  const emp = eq.empty ? null : normEmp(eq.docs[0].id, eq.docs[0].data());
 
   buildNav(p, emp);
   if (p.role === 'admin') keepNameListFresh();
@@ -359,7 +377,7 @@ async function initChange() {
 // Mirrors every profile's display name into loginDirectory. Existing flags are kept.
 async function syncDirectory() {
   const [ps, ds] = await Promise.all([db.collection('profiles').get(), db.collection('loginDirectory').get()]);
-  const want = new Map(ps.docs.map(d => [d.id, d.data().displayName]));
+  const want = new Map(ps.docs.filter(d => d.data().displayName).map(d => [d.id, d.data().displayName]));
   const have = new Map(ds.docs.map(d => [d.id, d.data().displayName]));
   const batch = db.batch();
   let changes = 0;
@@ -562,8 +580,8 @@ async function initEmployee() {
     db.collection('holidayLog').where('userId', '==', s.user.uid).get(),
     db.collection('birthdayUse').where('userId', '==', s.user.uid).get()
   ]);
-  const reqs = rq.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => y.startDate.localeCompare(x.startDate));
-  const logs = lg.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => y.date.localeCompare(x.date));
+  const reqs = rq.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => String(y.startDate || '').localeCompare(String(x.startDate || '')));
+  const logs = lg.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => String(y.date || '').localeCompare(String(x.date || '')));
   const birthdayUsed = bd.docs.map(d => d.data()).find(b => b.year === year);
   const t = summarise(e, reqs, logs, set, rota);
 
@@ -674,10 +692,10 @@ async function loadQueue() {
       db.collection('employees').get(),
       db.collection('calendarEntries').get()
     ]);
-    const emp = Object.fromEntries(es.docs.map(d => [d.id, d.data()]));
-    NAMES = Object.fromEntries(es.docs.map(d => [d.id, d.data().displayName]));
+    const emp = Object.fromEntries(es.docs.map(d => [d.id, normEmp(d.id, d.data())]));
+    NAMES = Object.fromEntries(Object.values(emp).filter(x => x.hasName).map(x => [x.id, x.displayName]));
     const entries = cs.docs.map(d => ({ id: d.id, ...d.data() }));
-    const rows = rs.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => x.startDate.localeCompare(y.startDate));
+    const rows = rs.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => String(x.startDate || '').localeCompare(String(y.startDate || '')));
 
     $('pending').innerHTML = rows.length ? rows.map(x => {
       const others = entries.filter(en => en.id !== x.id && en.startDate <= x.endDate && en.endDate >= x.startDate)
@@ -744,7 +762,7 @@ async function initEmployees() {
   ['s1start', 's1end', 's2start', 's2end'].forEach(id => { $(id).onchange = previewShutdown; });
   $('emps').addEventListener('input', onCellEdit);
   $('emps').addEventListener('change', onCellEdit);
-  await renderEmployees();
+  await safeRender();
 }
 
 function fillShutdownForm(set) {
@@ -783,11 +801,24 @@ async function saveShutdowns(ev) {
     await db.doc('settings/company').set({ shutdowns: list, updatedAt: TS() }, { merge: true });
     _settings = null;
     say('shutdownNote', 'Shutdown dates saved. Every employee’s balance now includes them.', 'ok');
-    await renderEmployees();
-  } catch (err) { say('shutdownNote', err.message, 'error'); reportError(err, 'Saving shutdown dates'); }
+  } catch (err) { say('shutdownNote', err.message, 'error'); reportError(err, 'Saving shutdown dates'); return; }
+  await safeRender();
 }
 
-const EDIT_FIELDS = ['team', 'department', 'startDate', 'allowanceDays', 'carryoverDays', 'accrualDays', 'longServiceDays'];
+// Wraps renderEmployees so a failure shows a message instead of leaving "Loading employees…" forever
+async function safeRender() {
+  try { await renderEmployees(); }
+  catch (err) {
+    $('emps').innerHTML = `<tr><td colspan="16" class="note--error">Could not show the employees: ${esc(err.message)}</td></tr>`;
+    reportError(err, 'Employees table');
+  }
+}
+
+async function removeEmployee(id) {
+  if (!confirm('Remove this employee record? This only deletes the record shown here (it has no name), not a sign-in account.')) return;
+  try { await db.collection('employees').doc(id).delete(); await safeRender(); }
+  catch (err) { reportError(err, 'Removing the record'); }
+}
 
 async function renderEmployees() {
   const set = await getSettings();
@@ -810,7 +841,7 @@ async function renderEmployees() {
   fillShutdownForm(set);
   previewShutdown();
 
-  EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  EMPS = es.docs.map(d => normEmp(d.id, d.data())).sort(byName);
   const reqs = rs.docs.map(d => d.data());
   const logs = ls.docs.map(d => d.data());
   const roles = Object.fromEntries(ps.docs.map(d => [d.id, d.data().role]));
@@ -818,14 +849,15 @@ async function renderEmployees() {
   const birthdayUsers = new Set(bs.docs.map(d => d.data()).filter(b => b.year === year).map(b => b.userId));
   const num = (field, v) => `<td><input class="cell num" type="number" step="0.5" min="0" data-field="${field}" value="${esc(v)}" aria-label="${field}"></td>`;
 
-  $('empCount').textContent = `${EMPS.length} employees`;
+  const unnamed = EMPS.filter(x => !x.hasName).length;
+  $('empCount').textContent = `${EMPS.length} records` + (unnamed ? ` · ${unnamed} without a name` : '');
   $('emps').innerHTML = EMPS.map(x => {
     const t = summarise(x, reqs.filter(r => r.employeeId === x.id), logs.filter(l => l.employeeId === x.id), set, rota);
     const role = roles[x.userId] || 'employee';
     const self = x.userId === window._me;
     return `
       <tr data-id="${esc(x.id)}">
-        <td><b>${esc(x.displayName)}</b> <small>${esc(x.initials)}</small>${role === 'admin' ? ' <span class="pill admin">admin</span>' : ''}</td>
+        <td>${x.hasName ? `<b>${esc(x.displayName)}</b> <small>${esc(x.initials)}</small>` : `<b class="note--error">(no name)</b> <small>${esc(x.id)}</small>`}${role === 'admin' ? ' <span class="pill admin">admin</span>' : ''}</td>
         <td><select class="cell" data-field="team" aria-label="Team">${set.teams.map(tm => `<option${tm === x.team ? ' selected' : ''}>${esc(tm)}</option>`).join('')}</select></td>
         <td><input class="cell" data-field="department" value="${esc(x.department)}" aria-label="Department"></td>
         <td><input class="cell" type="date" data-field="startDate" value="${esc(x.startDate)}" aria-label="Start date"></td>
@@ -841,7 +873,8 @@ async function renderEmployees() {
         <td class="num ${bfClass(t.bradford)}">${fmt(t.bradford)}</td>
         <td>${birthdayUsers.has(x.userId) ? 'Used' : '–'}</td>
         <td>
-          <button type="button" class="small ghost" data-action="role-toggle" data-uid="${esc(x.userId)}" data-role="${role === 'admin' ? 'employee' : 'admin'}"${self ? ' disabled' : ''}>${role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
+          <button type="button" class="small ghost" data-action="role-toggle" data-uid="${esc(x.userId)}" data-role="${role === 'admin' ? 'employee' : 'admin'}"${self || !x.userId ? ' disabled' : ''}>${role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
+          ${x.hasName ? '' : `<button type="button" class="small red" data-action="emp-remove" data-id="${esc(x.id)}">Remove record</button>`}
         </td>
       </tr>`;
   }).join('') || '<tr><td colspan="16" class="empty">No employees found in the employees collection.</td></tr>';
@@ -893,7 +926,7 @@ async function saveEmployees() {
   say('empNote', 'Saving…');
   try {
     await batch.commit();
-    await renderEmployees();
+    await safeRender();
     say('empNote', `Saved ${rows.length} ${rows.length === 1 ? 'employee' : 'employees'}.`, 'ok');
   } catch (err) {
     $('saveAll').disabled = false;
@@ -931,14 +964,14 @@ async function addEmployee(ev) {
     say('addNote', `Created ${name}. Login: ${email}`, 'ok');
     $('newEmp').reset();
     $('epw').value = DEFAULT_PW;
-    renderEmployees();
+    safeRender();
   } catch (err) { say('addNote', err.message, 'error'); }
   finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
 }
 
 async function toggleRole(uid, role) {
   if (!uid || !confirm(`Change this account to "${role}"?`)) return;
-  try { await db.collection('profiles').doc(uid).update({ role }); renderEmployees(); }
+  try { await db.collection('profiles').doc(uid).update({ role }); await safeRender(); }
   catch (err) { reportError(err, 'Changing role'); }
 }
 
@@ -958,7 +991,7 @@ async function initLog() {
 
   try {
     const es = await db.collection('employees').get();
-    EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
+    EMPS = es.docs.map(d => normEmp(d.id, d.data())).filter(x => x.hasName).sort(byName);
   } catch (err) {
     reportError(err, 'Could not load the employee list');
     $('lemp').innerHTML = '<option value="">Employees could not be loaded</option>';
@@ -973,7 +1006,7 @@ async function initLog() {
 async function loadLog() {
   try {
     const snap = await db.collection('holidayLog').get();
-    LOGS = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date));
+    LOGS = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     renderLog();
   } catch (err) {
     $('logRows').innerHTML = `<tr><td colspan="6" class="note--error">Could not load the log: ${esc(err.message)}</td></tr>`;
