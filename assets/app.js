@@ -8,7 +8,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
-const APP_VERSION = '6';
+const APP_VERSION = '7';
 const DEFAULT_PW = '000000';
 const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
 const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
@@ -457,14 +457,15 @@ async function runSetup() {
       cred = await auth.createUserWithEmailAndPassword(adminEmail, DEFAULT_PW);
     } catch (e) {
       if (e.code !== 'auth/email-already-in-use') throw e;
-      try { cred = await auth.signInWithEmailAndPassword(adminEmail, DEFAULT_PW); }
-      catch (_) { throw new Error('Admin already exists and its password has been changed. Sign in as Admin, then add anyone missing on the Employees page.'); }
+      try { cred = await auth.signInWithEmailAndPassword(adminEmail, $('setupPw').value || DEFAULT_PW); }
+      catch (_) { throw new Error('Admin already exists and that password was not accepted. Type the current Admin password in the box above the button and try again.'); }
     }
     const adminUid = cred.user.uid;
     const profileRef = db.collection('profiles').doc(adminUid);
 
     let existing = null;
     try { const ps = await profileRef.get(); existing = ps.exists ? ps.data() : null; } catch (_) { /* treated as missing */ }
+    const freshInstall = !existing;
     if (!existing) {
       const b = db.batch();
       b.set(db.doc('settings/setup'), { done: true, by: adminUid, createdAt: TS() });
@@ -493,20 +494,28 @@ async function runSetup() {
       log('✓ settings/company written');
     }
 
-    const bhBatch = db.batch();
-    S.bankHolidays.forEach(([date, name]) => bhBatch.set(db.collection('bankHolidays').doc(date), { date, name }));
-    await bhBatch.commit();
-    log(`✓ bankHolidays: ${S.bankHolidays.length} documents`);
-
-    for (let i = 0; i < S.rota.length; i += 400) {
-      const b = db.batch();
-      S.rota.slice(i, i + 400).forEach(r => b.set(db.collection('rotaDays').doc(r[0]), {
-        date: r[0], day: r[1], label: r[2], bankHoliday: !!r[2],
-        team1Off: !!r[3], team2Off: !!r[4], team1Accrued: r[5], team2Accrued: r[6], companyShutdown: !!r[7]
-      }));
-      await b.commit();
+    if (!(await db.collection('bankHolidays').limit(1).get()).empty) {
+      log('bankHolidays already there – kept', 'skip');
+    } else {
+      const bhBatch = db.batch();
+      S.bankHolidays.forEach(([date, name]) => bhBatch.set(db.collection('bankHolidays').doc(date), { date, name }));
+      await bhBatch.commit();
+      log(`✓ bankHolidays: ${S.bankHolidays.length} documents`);
     }
-    log(`✓ rotaDays: ${S.rota.length} documents (full 2027 rota)`);
+
+    if (!(await db.collection('rotaDays').limit(1).get()).empty) {
+      log('rotaDays already there – kept', 'skip');
+    } else {
+      for (let i = 0; i < S.rota.length; i += 400) {
+        const b = db.batch();
+        S.rota.slice(i, i + 400).forEach(r => b.set(db.collection('rotaDays').doc(r[0]), {
+          date: r[0], day: r[1], label: r[2], bankHoliday: !!r[2],
+          team1Off: !!r[3], team2Off: !!r[4], team1Accrued: r[5], team2Accrued: r[6], companyShutdown: !!r[7]
+        }));
+        await b.commit();
+      }
+      log(`✓ rotaDays: ${S.rota.length} documents (full 2027 rota)`);
+    }
 
     /* 3. Employees: Auth user + profile + employee record */
     const byName = {};
@@ -539,16 +548,29 @@ async function runSetup() {
       }
     }
 
-    /* 4. Holiday log entries from the workbook */
-    for (const l of S.log) {
-      const emp = byName[l.name];
-      if (!emp) { log(`Log entry ${l.n}: ${l.name} not found – skipped`, 'err'); continue; }
-      await db.collection('holidayLog').doc('excel-' + l.n).set({
-        employeeId: emp.id, userId: emp.userId, employeeName: l.name,
-        date: l.date, leaveType: l.type, days: l.days, notes: l.notes, createdAt: TS()
-      });
+    /* 4. The read-only "Calendar" login for the office TV */
+    try {
+      await provisionDisplayUser(secApp, log);
+      log(`✓ "${DISPLAY_NAME}" login ready – role display, password ${DEFAULT_PW}`);
+    } catch (err) {
+      failed++;
+      log(`✗ "${DISPLAY_NAME}" login: ${err.code || err.message}`, 'err');
     }
-    log(`✓ holidayLog: ${S.log.length} entry from the workbook`);
+
+    /* 5. Holiday log entries from the workbook (first install only, so deleted entries stay deleted) */
+    if (freshInstall) {
+      for (const l of S.log) {
+        const emp = byName[l.name];
+        if (!emp) { log(`Log entry ${l.n}: ${l.name} not found – skipped`, 'err'); continue; }
+        await db.collection('holidayLog').doc('excel-' + l.n).set({
+          employeeId: emp.id, userId: emp.userId, employeeName: l.name,
+          date: l.date, leaveType: l.type, days: l.days, notes: l.notes, createdAt: TS()
+        });
+      }
+      log(`✓ holidayLog: ${S.log.length} entry from the workbook`);
+    } else {
+      log('holidayLog left as it is', 'skip');
+    }
 
     await syncDirectory();
     log('✓ loginDirectory: sign-in dropdown list written');
@@ -823,10 +845,49 @@ async function renderDisplayUser() {
     const snap = await db.collection('profiles').where('role', '==', 'display').get();
     const exists = !snap.empty;
     $('displayBtn').disabled = exists;
+    $('displayRows').innerHTML = snap.docs.map(d => `<tr><td>${esc(d.data().displayName)}</td><td><span class="pill">display</span></td><td>${esc(nameToMail(d.data().displayName || ''))}</td></tr>`).join('')
+      || '<tr><td colspan="3" class="empty">None yet.</td></tr>';
     $('displayInfo').textContent = exists
       ? `The "${DISPLAY_NAME}" login exists. Sign in with the name ${DISPLAY_NAME} and password ${DEFAULT_PW}.`
       : `The "${DISPLAY_NAME}" login has not been created yet.`;
   } catch (err) { reportError(err, 'TV display login'); }
+}
+
+// Creates (or repairs) the read-only "Calendar" login: sign-in account, profile, sign-in list entry.
+// Used by the Employees-page button and by the first-time setup, so both behave the same.
+async function provisionDisplayUser(secApp, step) {
+  const email = nameToMail(DISPLAY_NAME);
+  step(`Creating the "${DISPLAY_NAME}" sign-in account ${email}…`);
+  let cred;
+  try {
+    cred = await secApp.auth().createUserWithEmailAndPassword(email, DEFAULT_PW);
+    step('✓ Sign-in account created');
+  } catch (e) {
+    if (e.code !== 'auth/email-already-in-use') throw e;
+    try {
+      cred = await secApp.auth().signInWithEmailAndPassword(email, DEFAULT_PW);
+      step('Sign-in account already existed – reusing it', 'skip');
+    } catch (_) {
+      throw new Error(`A "${DISPLAY_NAME}" sign-in already exists with a different password. Delete it under Firebase → Authentication → Users, then try again.`);
+    }
+  }
+  const uid = cred.user.uid;
+  await secApp.auth().signOut();
+
+  step('Saving the profile…');
+  await db.collection('profiles').doc(uid).set({ displayName: DISPLAY_NAME, role: 'display', mustChangePassword: false, createdAt: TS() });
+  step('✓ Profile saved (role: display)');
+
+  try {
+    await db.collection('loginDirectory').doc(uid).set({ displayName: DISPLAY_NAME });
+    step('✓ Added to the sign-in name list');
+  } catch (e) {
+    step(`Could not add the name to the sign-in list (${e.code || e.message}). You can still sign in: choose "My name isn’t listed" and type ${DISPLAY_NAME}.`, 'skip');
+  }
+
+  const check = await db.collection('profiles').doc(uid).get();
+  if (!check.exists || check.data().role !== 'display') throw new Error('The profile did not save.');
+  return uid;
 }
 
 async function createDisplayUser() {
@@ -840,41 +901,9 @@ async function createDisplayUser() {
     if (cls) li.className = cls;
     $('displayLog').appendChild(li);
   };
-  const email = nameToMail(DISPLAY_NAME);
   const sec = firebase.initializeApp(firebase.app().options, 'display-' + Date.now());
   try {
-    // 1. The sign-in account (made on a second app instance so the admin stays signed in)
-    step(`Creating the sign-in account ${email}…`);
-    let cred;
-    try {
-      cred = await sec.auth().createUserWithEmailAndPassword(email, DEFAULT_PW);
-      step('✓ Sign-in account created');
-    } catch (e) {
-      if (e.code !== 'auth/email-already-in-use') throw e;
-      try {
-        cred = await sec.auth().signInWithEmailAndPassword(email, DEFAULT_PW);
-        step('Sign-in account already existed – reusing it', 'skip');
-      } catch (_) {
-        throw new Error(`A "${DISPLAY_NAME}" sign-in already exists with a different password. Delete it under Firebase → Authentication → Users, then try again.`);
-      }
-    }
-    const uid = cred.user.uid;
-
-    // 2. The profile: this is what lets the account sign in and marks it read-only
-    step('Saving the profile…');
-    await db.collection('profiles').doc(uid).set({ displayName: DISPLAY_NAME, role: 'display', mustChangePassword: false, createdAt: TS() });
-    step('✓ Profile saved (role: display)');
-
-    // 3. The name in the sign-in drop-down (optional: the login works without it)
-    try {
-      await db.collection('loginDirectory').doc(uid).set({ displayName: DISPLAY_NAME });
-      step('✓ Added to the sign-in name list');
-    } catch (e) {
-      step(`Could not add the name to the sign-in list (${e.code || e.message}). You can still sign in: choose "My name isn’t listed" and type ${DISPLAY_NAME}.`, 'skip');
-    }
-
-    const check = await db.collection('profiles').doc(uid).get();
-    if (!check.exists || check.data().role !== 'display') throw new Error('The profile did not save.');
+    await provisionDisplayUser(sec, step);
     say('displayNote', `Done. On the TV, choose "${DISPLAY_NAME}" (or type it) and sign in with ${DEFAULT_PW}.`, 'ok');
     await renderDisplayUser();
   } catch (err) {
