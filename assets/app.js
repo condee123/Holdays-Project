@@ -176,13 +176,35 @@ function buildNav(p, emp) {
   if (brand && p.role === 'admin') brand.textContent = 'Holiday Tracker · Admin';
 }
 
-async function logout() { await auth.signOut(); location.href = 'index.html'; }
+async function logout() {
+  // Never let a slow sign-out leave the page hanging
+  try { await Promise.race([auth.signOut(), sleep(3000)]); } catch (_) { /* ignore */ }
+  location.replace('index.html');
+}
+
+// The sign-in dropdown: a listed name, or "use my email" for people with a real login email
+function needsEmail() {
+  const sel = $('who');
+  const opt = sel.options[sel.selectedIndex];
+  return sel.value === '__other' || (opt && opt.dataset.email === '1');
+}
+
+function loginValue() { return needsEmail() ? $('name').value : $('who').value; }
+
+function toggleOther() {
+  const typed = needsEmail();
+  $('otherWrap').hidden = !typed;
+  $('name').required = typed;
+  $('nameLabel').textContent = $('who').value === '__other' ? 'Your name or email address' : 'Your login email address';
+}
 
 async function signIn(e) {
   e.preventDefault();
   say('message', '');
+  const who = loginValue().trim();
+  if (!who) return say('message', 'Please choose your name.', 'error');
   try {
-    const cred = await auth.signInWithEmailAndPassword(loginEmail($('name').value), $('pw').value);
+    const cred = await auth.signInWithEmailAndPassword(loginEmail(who), $('pw').value);
     const snap = await db.collection('profiles').doc(cred.user.uid).get();
     if (!snap.exists) { await auth.signOut(); return say('message', 'Account not set up yet. Contact an administrator.', 'error'); }
     const p = snap.data();
@@ -194,15 +216,36 @@ async function signIn(e) {
 }
 
 async function resetPw() {
-  const v = $('name').value;
-  if (!v.includes('@')) return say('message', 'To email a reset link, type your email address in the Name box. Otherwise contact an administrator.', 'error');
-  try { await auth.sendPasswordResetEmail(v.trim()); } catch (_) { /* don't reveal whether the account exists */ }
+  const v = needsEmail() ? $('name').value.trim() : '';
+  if (!v.includes('@')) return say('message', 'To email a reset link, choose "use my email" in the list and type your email address. Otherwise contact an administrator.', 'error');
+  try { await auth.sendPasswordResetEmail(v); } catch (_) { /* don't reveal whether the account exists */ }
   say('message', 'If that account exists, a reset email has been sent.', 'ok');
+}
+
+// Public list of names for the sign-in dropdown (loginDirectory holds display names only)
+async function loadLoginNames() {
+  const sel = $('who');
+  const other = '<option value="__other">My name isn\u2019t listed / use my email</option>';
+  try {
+    const snap = await db.collection('loginDirectory').get();
+    const people = snap.docs.map(d => d.data()).filter(x => x.displayName)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+    sel.innerHTML = '<option value="">Select your name…</option>' +
+      people.map(x => `<option${x.emailLogin ? ' data-email="1"' : ''}>${esc(x.displayName)}</option>`).join('') + other;
+    if (!people.length) sel.value = '__other';
+  } catch (err) {
+    sel.innerHTML = other;
+    sel.value = '__other';
+    say('message', 'Could not load the list of names – type your name instead.', 'error');
+  }
+  toggleOther();
 }
 
 function initLogin() {
   $('login').onsubmit = signIn;
+  $('who').onchange = toggleOther;
   if ($('setupBtn')) $('setupBtn').onclick = runSetup;
+  loadLoginNames();
 }
 
 async function initChange() {
@@ -223,6 +266,25 @@ async function initChange() {
       else say('message', err.message, 'error');
     }
   };
+}
+
+/* ---------- login directory (names for the sign-in dropdown) ---------- */
+
+// Mirrors every profile's display name into loginDirectory. Existing flags are kept.
+async function syncDirectory() {
+  const [ps, ds] = await Promise.all([db.collection('profiles').get(), db.collection('loginDirectory').get()]);
+  const want = new Map(ps.docs.map(d => [d.id, d.data().displayName]));
+  const have = new Map(ds.docs.map(d => [d.id, d.data().displayName]));
+  const batch = db.batch();
+  let changes = 0;
+  want.forEach((name, id) => {
+    if (have.get(id) !== name) { batch.set(db.collection('loginDirectory').doc(id), { displayName: name }, { merge: true }); changes++; }
+  });
+  have.forEach((_, id) => {
+    if (!want.has(id)) { batch.delete(db.collection('loginDirectory').doc(id)); changes++; }
+  });
+  if (changes) await batch.commit();
+  return changes;
 }
 
 /* ==========================================================================
@@ -349,6 +411,9 @@ async function runSetup() {
       });
     }
     log(`✓ holidayLog: ${S.log.length} entry from the workbook`);
+
+    await syncDirectory();
+    log('✓ loginDirectory: sign-in dropdown list written');
 
     log(`Done. ${created} created, ${skipped} skipped, ${failed} failed. Sign in with the person’s name and password ${DEFAULT_PW}; everyone is asked to choose a new password on first login.`, 'done');
     await auth.signOut();
@@ -516,16 +581,23 @@ async function initEmployees() {
   $('editForm').onsubmit = saveEdit;
   $('editCancel').onclick = () => $('editDlg').close();
   await renderEmployees();
+  syncDirectory().catch(err => console.warn('Login list not synced:', err.message));
 }
 
 async function renderEmployees() {
   const set = await getSettings();
-  const [es, rs, ls, ps] = await Promise.all([
-    db.collection('employees').get(),
-    db.collection('holidayRequests').get(),
-    db.collection('holidayLog').get(),
-    db.collection('profiles').get()
-  ]);
+  let es, rs, ls, ps;
+  try {
+    [es, rs, ls, ps] = await Promise.all([
+      db.collection('employees').get(),
+      db.collection('holidayRequests').get(),
+      db.collection('holidayLog').get(),
+      db.collection('profiles').get()
+    ]);
+  } catch (err) {
+    $('emps').innerHTML = `<tr><td colspan="14" class="note--error">Could not load employees: ${esc(err.message)}</td></tr>`;
+    return;
+  }
   EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
   const reqs = rs.docs.map(d => d.data());
   const logs = ls.docs.map(d => d.data());
@@ -583,6 +655,7 @@ async function addEmployee(ev) {
       accrualDays: num('eaccr', d.accrualDays), longServiceDays: num('elong', d.longServiceDays),
       active: true, createdAt: TS()
     });
+    batch.set(db.collection('loginDirectory').doc(uid), { displayName: name, emailLogin: !!$('eemail').value.trim() });
     await batch.commit();
     say('note', `Created ${name}. Login: ${email}`, 'ok');
     $('newEmp').reset();
@@ -648,9 +721,13 @@ async function initLog() {
 }
 
 async function loadLog() {
-  const snap = await db.collection('holidayLog').get();
-  LOGS = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date));
-  renderLog();
+  try {
+    const snap = await db.collection('holidayLog').get();
+    LOGS = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.date.localeCompare(a.date));
+    renderLog();
+  } catch (err) {
+    $('logRows').innerHTML = `<tr><td colspan="6" class="note--error">Could not load the log: ${esc(err.message)}</td></tr>`;
+  }
 }
 
 function renderLog() {
@@ -753,5 +830,20 @@ async function draw() {
 
 /* ---------- start ---------- */
 
+const EXPECTED_PAGE = {
+  'index.html': 'login', 'change-password.html': 'change', 'employee.html': 'employee',
+  'calendar.html': 'calendar', 'admin.html': 'admin', 'employees.html': 'employees', 'holiday-log.html': 'log'
+};
+
+function fileMismatch() {
+  const file = location.pathname.split('/').pop() || 'index.html';
+  if (!EXPECTED_PAGE[file] || EXPECTED_PAGE[file] === page) return false;
+  const bar = document.createElement('div');
+  bar.className = 'banner';
+  bar.textContent = `Wrong page content: ${file} should contain the "${EXPECTED_PAGE[file]}" page but contains "${page || 'unknown'}". Re-upload the correct ${file} from the project folder.`;
+  document.body.prepend(bar);
+  return true;
+}
+
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
-if (INIT[page]) INIT[page]();
+if (!fileMismatch() && INIT[page]) INIT[page]();
