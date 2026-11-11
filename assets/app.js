@@ -8,6 +8,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
+const APP_VERSION = '6';
 const DEFAULT_PW = '000000';
 const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
 const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
@@ -831,20 +832,55 @@ async function renderDisplayUser() {
 async function createDisplayUser() {
   const btn = $('displayBtn');
   btn.disabled = true;
-  say('displayNote', 'Creating…');
+  $('displayLog').innerHTML = '';
+  say('displayNote', '');
+  const step = (text, cls) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    if (cls) li.className = cls;
+    $('displayLog').appendChild(li);
+  };
+  const email = nameToMail(DISPLAY_NAME);
   const sec = firebase.initializeApp(firebase.app().options, 'display-' + Date.now());
   try {
-    const cred = await authUser(sec, nameToMail(DISPLAY_NAME));
+    // 1. The sign-in account (made on a second app instance so the admin stays signed in)
+    step(`Creating the sign-in account ${email}…`);
+    let cred;
+    try {
+      cred = await sec.auth().createUserWithEmailAndPassword(email, DEFAULT_PW);
+      step('✓ Sign-in account created');
+    } catch (e) {
+      if (e.code !== 'auth/email-already-in-use') throw e;
+      try {
+        cred = await sec.auth().signInWithEmailAndPassword(email, DEFAULT_PW);
+        step('Sign-in account already existed – reusing it', 'skip');
+      } catch (_) {
+        throw new Error(`A "${DISPLAY_NAME}" sign-in already exists with a different password. Delete it under Firebase → Authentication → Users, then try again.`);
+      }
+    }
     const uid = cred.user.uid;
-    const batch = db.batch();
-    batch.set(db.collection('profiles').doc(uid), { displayName: DISPLAY_NAME, role: 'display', mustChangePassword: false, createdAt: TS() });
-    batch.set(db.collection('loginDirectory').doc(uid), { displayName: DISPLAY_NAME });
-    await batch.commit();
-    say('displayNote', `Created. On the TV, choose "${DISPLAY_NAME}" and sign in with ${DEFAULT_PW}.`, 'ok');
+
+    // 2. The profile: this is what lets the account sign in and marks it read-only
+    step('Saving the profile…');
+    await db.collection('profiles').doc(uid).set({ displayName: DISPLAY_NAME, role: 'display', mustChangePassword: false, createdAt: TS() });
+    step('✓ Profile saved (role: display)');
+
+    // 3. The name in the sign-in drop-down (optional: the login works without it)
+    try {
+      await db.collection('loginDirectory').doc(uid).set({ displayName: DISPLAY_NAME });
+      step('✓ Added to the sign-in name list');
+    } catch (e) {
+      step(`Could not add the name to the sign-in list (${e.code || e.message}). You can still sign in: choose "My name isn’t listed" and type ${DISPLAY_NAME}.`, 'skip');
+    }
+
+    const check = await db.collection('profiles').doc(uid).get();
+    if (!check.exists || check.data().role !== 'display') throw new Error('The profile did not save.');
+    say('displayNote', `Done. On the TV, choose "${DISPLAY_NAME}" (or type it) and sign in with ${DEFAULT_PW}.`, 'ok');
     await renderDisplayUser();
   } catch (err) {
     btn.disabled = false;
-    say('displayNote', 'Could not create the login: ' + (err.code || err.message), 'error');
+    step(`✗ ${err.code || ''} ${err.message}`.trim(), 'err');
+    say('displayNote', 'Could not create the login.' + (err.code === 'permission-denied' ? ' Firestore blocked it: publish the latest firestore.rules in the Firebase console.' : ''), 'error');
   } finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
 }
 
@@ -1235,6 +1271,8 @@ function fileMismatch() {
   document.body.prepend(bar);
   return true;
 }
+
+document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION}</footer>`);
 
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
 if (!fileMismatch() && INIT[page]) INIT[page]();
