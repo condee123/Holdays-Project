@@ -1,29 +1,67 @@
-# Company Holiday Tracker (starter)
+# Company Holiday Tracker (Firebase edition)
 
-Static front end for GitHub Pages + Supabase backend. **Do not deploy with placeholder config.**
+Static site for GitHub Pages + Firebase Authentication + Cloud Firestore. All data comes from `Company_Holiday_Tracker.xlsx` via the one-time setup button on the sign-in page.
 
-## Pages
-- `index.html`: name/password sign-in
-- `change-password.html`: first-login password update
-- `employee.html`: request leave, allowance and request history
-- `admin.html`: pending approval queue and calendar preview
-- `calendar.html`: shared month calendar
+## Files
+| File | Purpose |
+|---|---|
+| `index.html` | Sign-in (name dropdown) + one-time setup button |
+| `change-password.html` | First-login password change |
+| `employee.html` | My allowance, request leave, my requests, recorded leave |
+| `calendar.html` | Shared calendar with the 4-day-week rota, bank holidays, shutdown, leave |
+| `admin.html` | Approval queue with a who-is-off calendar and a list of clashes for each request |
+| `employees.html` | Editable employee table (saved back to Firestore), Christmas shutdown dates, add employee, make admin |
+| `holiday-log.html` | Quick-entry log (annual leave, sick, public holiday, unpaid, other) |
+| `assets/seed-data.js` | Employees, rota, bank holidays and settings extracted from the workbook |
+| `firestore.rules` | Security rules (publish these **before** running setup) |
 
-## Deployment outline
-1. Create a Supabase project (UK region if available/appropriate) and run `supabase/schema.sql` in SQL Editor.
-2. Configure `assets/config.js` with the project URL and anon key only. Never use a service-role key in browser code.
-3. Create employee accounts in Supabase Auth using synthetic email addresses derived from names: lower-case name with punctuation replaced by dots + `@holiday.company.invalid`. Example `Connor Dennison` -> `connor.dennison@holiday.company.invalid`. Assign temporary passwords; create matching `profiles` and `employees` rows (see schema comments).
-4. Set exactly three profiles to `role='admin'`. Link their Auth user IDs to profiles. Admins should use MFA.
-5. Enable GitHub Pages for this repository (root or `/docs`) and publish.
-6. Test with separate employee/admin accounts, including attempts to access other employees' data.
+## Setup (in this order)
+1. Firebase console → **Authentication → Sign-in method**: enable **Email/Password**.
+2. **Firestore Database**: create it, then **Rules** → paste `firestore.rules` → **Publish**.
+3. **Authentication → Settings → Authorized domains**: add `<your-username>.github.io`.
+4. Upload this folder to GitHub and enable Pages.
+5. Open the site, expand **First-time setup**, click **Create database & users**. Run it straight away, before sharing the link: the first person to run it becomes the admin.
+6. Sign in as `Admin` / `000000`, choose a new password, then delete the `<details class="setup">` block from `index.html`.
 
-## Excel rules to migrate
-Employee List includes employee, department, start date, allowance, carryover, team, bank-holiday accrual and long-service extra days. Team Rota 2027 defines the 4-day rotation, bank-holiday accrual and shutdown. Individual sheets are derived views. Confirm the 2027 calendar/allowances before production and plan yearly rollover.
+Everyone else signs in with their full name and `000000`, and is made to pick a new password (10+ characters) first.
 
-## Important production checklist
-- Configure Supabase Auth password policy, rate limits, email/identity recovery (or secure admin-issued reset), and MFA for admins.
-- Keep database backups and a documented retention policy.
-- Add a server-side approval function/trigger that checks balances and date overlaps atomically; do not rely on browser calculations.
-- Decide whether calendar shows names, initials, or only team availability; publish only the minimum personal data.
-- Add date-specific rota/bank-holiday data and calculate working days according to each employee's team. The demo client currently counts weekdays only and is not the full Excel rota engine.
-- Add admin CRUD screens, audit log, export, and a proper password-reset workflow before production use.
+## Firestore collections created by setup
+| Collection | Contents |
+|---|---|
+| `profiles/{uid}` | displayName, role, mustChangePassword |
+| `employees/{uid}` | displayName, initials, department, team, startDate, allowanceDays, carryoverDays, accrualDays, longServiceDays |
+| `rotaDays/{yyyy-mm-dd}` | 365 days of 2027: team1Off, team2Off, bankHoliday, label, team1Accrued, team2Accrued, companyShutdown |
+| `bankHolidays/{yyyy-mm-dd}` | The 8 bank holidays |
+| `settings/company` | Holiday year, allowances, accrual per team, rotation start, shutdown dates, leave types |
+| `holidayLog/{id}` | Admin-entered leave and sickness (the workbook's Holiday Log) |
+| `birthdayUse/{uid_year}` | One document per employee per holiday year once the birthday day is used (stops a second use; deleted if the request is rejected) |
+| `loginDirectory/{uid}` | Display names only, publicly readable, feeds the sign-in dropdown (kept in sync when an admin opens the Employees page) |
+| `holidayRequests/{id}` | Requests from the site (created when someone submits one) |
+| `calendarEntries/{requestId}` | Initials + dates only, for the shared calendar |
+
+## How the workbook rules are applied
+- **Entitlement** = annual allowance + carryover + bank holiday accrual + long service (same as *Total Available*).
+- **Days used**: Annual Leave entries in the holiday log plus approved requests, within the holiday year in `settings/company`.
+- **Working days** for a request skip weekends, bank holidays, the Christmas shutdown and the person's own rest day (Team 1 / Team 2 from the rota).
+- **Bradford Factor** = S² × D from Sick Leave log entries, using the workbook's amber/orange/red bands (45 / 100 / 900).
+- **Initials** are two letters, extended where two people would clash (Daniel Watt `DWa`, Darren Wilkinson `DWi`, Madison Coyle `MCoy`, Mark Conroy `MCon`).
+
+## Files that must exist in the repository (exact names, all in the same folder)
+`index.html`, `change-password.html`, `employee.html`, `calendar.html`, `admin.html`, `employees.html`, `holiday-log.html`, and an `assets/` folder containing `app.js`, `config.js`, `seed-data.js`, `style.css`.
+Each page checks it has the right content and shows a red banner if, for example, `holiday-log.html` contains the employees page.
+
+After uploading, hard-refresh (Ctrl+F5, or clear the site's cache) so the browser does not keep old copies of `app.js`.
+
+## Christmas shutdown and birthday day
+- **Shutdown**: an admin enters two date ranges on the Employees page (2026–2027 and 2027–2028). Working days inside them that fall in the holiday year come off every employee's allowance, except weekends, bank holidays and the team's own rest day. Employees cannot book leave on shutdown days.
+- **Birthday day**: a checkbox on the booking form, once per holiday year. One of the requested days is covered by it, so one day less comes off the allowance. It is greyed out once used and freed again if the request is rejected.
+
+## Office TV login
+On the Employees page an admin presses **Create the Calendar login**. This makes a read-only sign-in called `Calendar` (password 000000, role `display`, no forced password change). It can only open the calendar page, which shows 1, 2, 3, 4, 6 or 12 months from the current month, remembers the choice in that browser and refreshes itself every 5 minutes. No rules change is needed.
+
+## Notes
+- The sign-in dropdown lists names from `loginDirectory`, which anyone with the site address can read. It contains names only. If the list is empty or cannot load, the page falls back to typing a name or email.
+- Name-based logins use a made-up email (`connor.dennison@holiday.company.invalid`), which cannot receive reset emails. Give anyone likely to forget their password a real login email on the Employees page.
+- Balance checks run in the browser, not on the server.
+- Requests are limited to the holiday year in `settings/company` (2027). Edit that document in the Firestore console to roll over.
+- Setup is safe to re-run: existing employees are skipped.
