@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Holiday Tracker – Sign in</title>
-  <link rel="stylesheet" href="assets/style.css?v=6">
+  <link rel="stylesheet" href="assets/style.css?v=7">
 </head>
 
 <body class="login-page" data-page="login">
@@ -42,10 +42,13 @@
     <details class="setup">
       <summary>First-time setup (administrators only)</summary>
       <p class="lead">
-        Creates the Admin login, all employee logins from the Excel workbook, the 2027 rota,
-        bank holidays, settings, the holiday log and the sign-in name list in Firestore.
-        Everyone starts with the password <b>000000</b> and must choose a new one at first sign-in.
+        Creates the Admin login, all employee logins from the Excel workbook, the read-only
+        <b>Calendar</b> login for the office TV, the 2027 rota, bank holidays, settings, the holiday log
+        and the sign-in name list in Firestore. Employees and Admin start with the password <b>000000</b>
+        and must choose a new one at first sign-in. It is safe to run again: anything that already exists is kept.
       </p>
+      <label for="setupPw">Admin password <span class="hint">only needed if Admin has already changed it</span></label>
+      <input id="setupPw" type="password" autocomplete="off">
       <button type="button" id="setupBtn">Create database &amp; users</button>
       <p id="setupMsg" class="note" role="status"></p>
       <ol id="setupLog" class="log"></ol>
@@ -59,9 +62,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="assets/config.js?v=6"></script>
-  <script src="assets/seed-data.js?v=6"></script>
-  <script src="assets/app.js?v=6"></script>
+  <script src="assets/config.js?v=7"></script>
+  <script src="assets/seed-data.js?v=7"></script>
+  <script src="assets/app.js?v=7"></script>
 </body>
 
 </html>
