@@ -224,3 +224,31 @@ fieldset.range {
   border-radius: 12px;
 }
 fieldset.range legend { padding: 0 6px; font-weight: 700; }
+
+/* ---------- Office TV calendar ---------- */
+
+.tv-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.tv-bar select { width: auto; margin: 0; }
+.tv-months { display: grid; gap: 14px; margin-top: 14px; }
+.tv-months.cols-1 { grid-template-columns: 1fr; }
+.tv-months.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.tv-months.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.tv-months.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.month-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.month-card h2 { text-align: center; margin: 0 0 6px; }
+.month-card .grid { margin-top: 6px; }
+
+body.tv main { max-width: none; margin: 14px 0; padding: 0 16px; }
+body.tv .topbar { padding: 8px 16px; }
+body.tv .day { min-height: 72px; }
+body.tv .tv-months.cols-3 .day, body.tv .tv-months.cols-4 .day { min-height: 56px; font-size: .75rem; padding: 4px; }
+body.tv .tv-months.cols-4 .day small, body.tv .tv-months.cols-4 .tag { display: none; }
+
+@media (max-width: 900px) {
+  .tv-months.cols-2, .tv-months.cols-3, .tv-months.cols-4 { grid-template-columns: 1fr; }
+}
+
+/* TV: grow the day cells so the chosen number of months fills the screen */
+body.tv .tv-months.rows-1 .day { min-height: max(60px, calc((100vh - 250px) / 6)); }
+body.tv .tv-months.rows-2 .day { min-height: max(48px, calc((100vh - 340px) / 12)); }
+body.tv .tv-months.rows-3 .day { min-height: max(40px, calc((100vh - 420px) / 18)); }
