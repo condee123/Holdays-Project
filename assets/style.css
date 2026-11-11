@@ -252,3 +252,7 @@ body.tv .tv-months.cols-4 .day small, body.tv .tv-months.cols-4 .tag { display: 
 body.tv .tv-months.rows-1 .day { min-height: max(60px, calc((100vh - 250px) / 6)); }
 body.tv .tv-months.rows-2 .day { min-height: max(48px, calc((100vh - 340px) / 12)); }
 body.tv .tv-months.rows-3 .day { min-height: max(40px, calc((100vh - 420px) / 18)); }
+
+/* ---------- Version stamp ---------- */
+
+.ver { text-align: center; color: #98a2b3; font-size: .75rem; padding: 12px 0 20px; }
