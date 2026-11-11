@@ -9,6 +9,8 @@ const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
 const DEFAULT_PW = '000000';
+const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
+const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
 const page = document.body.dataset.page;
 
 /* ---------- small helpers ---------- */
@@ -90,7 +92,8 @@ const ACTIONS = {
   'role-toggle': el => toggleRole(el.dataset.uid, el.dataset.role),
   'emp-remove': el => removeEmployee(el.dataset.id),
   'save-employees': saveEmployees,
-  'sync-names': syncNamesClicked
+  'sync-names': syncNamesClicked,
+  'create-display': createDisplayUser
 };
 
 document.addEventListener('click', e => {
@@ -243,7 +246,8 @@ async function guard(opts = {}) {
   const p = ps.data();
 
   if (p.mustChangePassword && page !== 'change') { location.href = 'change-password.html'; return; }
-  if (opts.admin && p.role !== 'admin') { location.href = 'employee.html'; return; }
+  if (p.role === 'display' && page !== 'calendar') { location.href = 'calendar.html'; return; }
+  if (opts.admin && p.role !== 'admin') { location.href = homeFor(p.role); return; }
 
   const eq = await db.collection('employees').where('userId', '==', user.uid).limit(1).get();
   const emp = eq.empty ? null : normEmp(eq.docs[0].id, eq.docs[0].data());
@@ -266,6 +270,12 @@ function keepNameListFresh() {
 function buildNav(p, emp) {
   const nav = $('nav');
   if (!nav) return;
+  if (p.role === 'display') {
+    nav.innerHTML = '<button type="button" class="ghost small" data-action="logout">Log out</button>';
+    const b = document.querySelector('.brand');
+    if (b) { b.textContent = 'Holiday Calendar'; b.removeAttribute('href'); }
+    return;
+  }
   const here = location.pathname.split('/').pop() || 'index.html';
   const links = [];
   if (p.role === 'admin') links.push(['admin.html', 'Approvals'], ['employees.html', 'Employees'], ['holiday-log.html', 'Holiday log']);
@@ -310,7 +320,7 @@ async function signIn(e) {
     if (!snap.exists) { await auth.signOut(); return say('message', 'Account not set up yet. Contact an administrator.', 'error'); }
     const p = snap.data();
     if (p.mustChangePassword) { location.href = 'change-password.html'; return; }
-    location.href = p.role === 'admin' ? 'admin.html' : 'employee.html';
+    location.href = homeFor(p.role);
   } catch (err) {
     say('message', err.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.' : 'Name or password not recognised.', 'error');
   }
@@ -364,7 +374,7 @@ async function initChange() {
     try {
       await s.user.updatePassword(a);
       await db.collection('profiles').doc(s.user.uid).update({ mustChangePassword: false });
-      location.href = s.p.role === 'admin' ? 'admin.html' : 'employee.html';
+      location.href = homeFor(s.p.role);
     } catch (err) {
       if (err.code === 'auth/requires-recent-login') { await auth.signOut(); location.href = 'index.html'; }
       else say('message', err.message, 'error');
@@ -759,6 +769,7 @@ async function initEmployees() {
   $('eteam').innerHTML = set.teams.map(t => `<option>${esc(t)}</option>`).join('');
   $('newEmp').onsubmit = addEmployee;
   $('shutdownForm').onsubmit = saveShutdowns;
+  renderDisplayUser();
   ['s1start', 's1end', 's2start', 's2end'].forEach(id => { $(id).onchange = previewShutdown; });
   $('emps').addEventListener('input', onCellEdit);
   $('emps').addEventListener('change', onCellEdit);
@@ -803,6 +814,38 @@ async function saveShutdowns(ev) {
     say('shutdownNote', 'Shutdown dates saved. Every employee’s balance now includes them.', 'ok');
   } catch (err) { say('shutdownNote', err.message, 'error'); reportError(err, 'Saving shutdown dates'); return; }
   await safeRender();
+}
+
+// The read-only "Calendar" login for the office TV (role "display": sees the calendar page only)
+async function renderDisplayUser() {
+  try {
+    const snap = await db.collection('profiles').where('role', '==', 'display').get();
+    const exists = !snap.empty;
+    $('displayBtn').disabled = exists;
+    $('displayInfo').textContent = exists
+      ? `The "${DISPLAY_NAME}" login exists. Sign in with the name ${DISPLAY_NAME} and password ${DEFAULT_PW}.`
+      : `The "${DISPLAY_NAME}" login has not been created yet.`;
+  } catch (err) { reportError(err, 'TV display login'); }
+}
+
+async function createDisplayUser() {
+  const btn = $('displayBtn');
+  btn.disabled = true;
+  say('displayNote', 'Creating…');
+  const sec = firebase.initializeApp(firebase.app().options, 'display-' + Date.now());
+  try {
+    const cred = await authUser(sec, nameToMail(DISPLAY_NAME));
+    const uid = cred.user.uid;
+    const batch = db.batch();
+    batch.set(db.collection('profiles').doc(uid), { displayName: DISPLAY_NAME, role: 'display', mustChangePassword: false, createdAt: TS() });
+    batch.set(db.collection('loginDirectory').doc(uid), { displayName: DISPLAY_NAME });
+    await batch.commit();
+    say('displayNote', `Created. On the TV, choose "${DISPLAY_NAME}" and sign in with ${DEFAULT_PW}.`, 'ok');
+    await renderDisplayUser();
+  } catch (err) {
+    btn.disabled = false;
+    say('displayNote', 'Could not create the login: ' + (err.code || err.message), 'error');
+  } finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
 }
 
 // Wraps renderEmployees so a failure shows a message instead of leaving "Loading employees…" forever
@@ -1065,6 +1108,7 @@ async function setupCalendar() {
 async function initCalendar() {
   const s = await guard();
   if (!s) return;
+  if (s.p.role === 'display') { await initDisplay(); return; }
   await setupCalendar();
   try {
     const bh = await db.collection('bankHolidays').orderBy(firebase.firestore.FieldPath.documentId()).get();
@@ -1083,24 +1127,9 @@ function gotoMonth(dateStr) {
   $('grid').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function draw() {
-  const set = await getSettings();
-  const y = monthDate.getFullYear(), m = monthDate.getMonth();
+// HTML for one month: weekday headings, then a cell per day with rota tags and leave chips
+function monthCells(y, m, entries, rota, set) {
   const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
-  const fIso = iso(first), lIso = iso(last);
-  $('month').textContent = monthDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-
-  let entries = [], rota = {};
-  try {
-    const [es, r] = await Promise.all([
-      db.collection('calendarEntries').where('startDate', '<=', lIso).get(),
-      getRota(fIso, lIso)
-    ]);
-    entries = es.docs.map(d => d.data()).filter(x => x.endDate >= fIso);
-    rota = r;
-    say('calnote', '');
-  } catch (err) { say('calnote', 'Could not load the calendar: ' + (err.code || err.message), 'error'); }
-
   let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<div class="head">${x}</div>`).join('');
   for (let i = 0; i < (first.getDay() + 6) % 7; i++) html += '<div class="day blank"></div>';
 
@@ -1123,7 +1152,71 @@ async function draw() {
 
     html += `<div class="${cls}"><b>${d}</b>${r.bankHoliday ? `<small>${esc(r.label)}</small>` : ''}<div>${tags}</div><div>${chips}</div></div>`;
   }
-  $('grid').innerHTML = html;
+  return html;
+}
+
+// Leave entries and rota days between two dates
+async function loadRange(fIso, lIso, noteId) {
+  try {
+    const [es, rota] = await Promise.all([
+      db.collection('calendarEntries').where('startDate', '<=', lIso).get(),
+      getRota(fIso, lIso)
+    ]);
+    say(noteId, '');
+    return { ok: true, entries: es.docs.map(d => d.data()).filter(x => x.endDate >= fIso), rota };
+  } catch (err) {
+    say(noteId, 'Could not load the calendar: ' + (err.code || err.message), 'error');
+    return { ok: false, entries: [], rota: {} };
+  }
+}
+
+async function draw() {
+  const set = await getSettings();
+  const y = monthDate.getFullYear(), m = monthDate.getMonth();
+  $('month').textContent = monthDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const { entries, rota } = await loadRange(iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0)), 'calnote');
+  $('grid').innerHTML = monthCells(y, m, entries, rota, set);
+}
+
+/* ---------- office TV: read-only, several months, refreshes itself ---------- */
+
+const TV_MONTHS = [1, 2, 3, 4, 6, 12];
+const TV_COLUMNS = { 1: 1, 2: 2, 3: 3, 4: 2, 6: 3, 12: 4 };
+
+async function initDisplay() {
+  $('staffView').hidden = true;
+  $('tvView').hidden = false;
+  document.body.classList.add('tv');
+  const sel = $('months');
+  sel.innerHTML = TV_MONTHS.map(n => `<option value="${n}">${n} ${n === 1 ? 'month' : 'months'}</option>`).join('');
+  let saved = 3;
+  try { saved = Number(localStorage.getItem('tvMonths')) || 3; } catch (_) { /* storage unavailable */ }
+  sel.value = TV_MONTHS.includes(saved) ? saved : 3;
+  sel.onchange = () => {
+    try { localStorage.setItem('tvMonths', sel.value); } catch (_) { /* ignore */ }
+    drawTv();
+  };
+  await drawTv();
+  setInterval(drawTv, 5 * 60 * 1000);   // pick up new requests and the change of month
+}
+
+async function drawTv() {
+  const set = await getSettings();
+  const n = Number($('months').value);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(start.getFullYear(), start.getMonth() + n, 0);
+  const { ok, entries, rota } = await loadRange(iso(start), iso(end), 'tvNote');
+  if (!ok) return;
+
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    html += `<section class="month-card"><h2>${d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h2><div class="grid">${monthCells(d.getFullYear(), d.getMonth(), entries, rota, set)}</div></section>`;
+  }
+  $('tvMonths').className = `tv-months cols-${TV_COLUMNS[n]} rows-${Math.ceil(n / TV_COLUMNS[n])}`;
+  $('tvMonths').innerHTML = html;
+  say('tvNote', 'Updated ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 }
 
 /* ---------- start ---------- */
