@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Employees</title>
-  <link rel="stylesheet" href="assets/style.css?v=6">
+  <link rel="stylesheet" href="assets/style.css?v=7">
 </head>
 
 <body data-page="employees">
@@ -61,6 +61,18 @@
         with a drop-down for how many months to display. It sees leave initials and dates, nothing else.
       </p>
       <button type="button" id="displayBtn" data-action="create-display">Create the Calendar login</button>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Role</th>
+              <th scope="col">Sign-in account</th>
+            </tr>
+          </thead>
+          <tbody id="displayRows"></tbody>
+        </table>
+      </div>
       <p id="displayInfo" class="note"></p>
       <ol id="displayLog" class="log"></ol>
       <p id="displayNote" class="note" role="status" aria-live="polite"></p>
@@ -178,8 +190,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="assets/config.js?v=6"></script>
-  <script src="assets/app.js?v=6"></script>
+  <script src="assets/config.js?v=7"></script>
+  <script src="assets/app.js?v=7"></script>
 </body>
 
 </html>
