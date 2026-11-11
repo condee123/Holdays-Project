@@ -19,7 +19,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const fmt = n => String(Math.round((Number(n) || 0) * 10) / 10);
 const sum = (arr, f) => arr.reduce((t, x) => t + f(x), 0);
-const dateGB = s => s ? new Date(s + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const dateGB = s => (s ? new Date(s + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
 function say(id, text, type) {
   const el = $(id);
@@ -27,6 +27,24 @@ function say(id, text, type) {
   el.textContent = text || '';
   el.className = 'note' + (type ? ' note--' + type : '');
 }
+
+// Shows a red bar at the top of the page, so a failure is never silent
+function reportError(err, context) {
+  console.error(context || '', err);
+  let bar = $('errorBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'errorBar';
+    bar.className = 'banner';
+    bar.setAttribute('role', 'alert');
+    document.body.prepend(bar);
+  }
+  const hint = err && err.code === 'permission-denied'
+    ? ' Firestore blocked the request: publish the latest firestore.rules in the Firebase console.' : '';
+  bar.textContent = (context ? context + ': ' : '') + (err && err.message ? err.message : String(err)) + hint;
+}
+
+window.addEventListener('unhandledrejection', e => reportError(e.reason, 'Something went wrong'));
 
 // "Connor Dennison" -> connor.dennison@holiday.company.invalid ; a real email is used as typed
 const nameToMail = n => n.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '') + '@holiday.company.invalid';
@@ -48,11 +66,13 @@ const ACTIONS = {
   resetPw,
   'cal-prev': () => changeMonth(-1),
   'cal-next': () => changeMonth(1),
+  'cal-goto': el => gotoMonth(el.dataset.date),
   approve: el => review(el.dataset.id, 'approved'),
   reject: el => review(el.dataset.id, 'rejected'),
   'log-delete': el => deleteLog(el.dataset.id),
-  'emp-edit': el => openEdit(el.dataset.id),
-  'role-toggle': el => toggleRole(el.dataset.uid, el.dataset.role)
+  'role-toggle': el => toggleRole(el.dataset.uid, el.dataset.role),
+  'save-employees': saveEmployees,
+  'sync-names': syncNamesClicked
 };
 
 document.addEventListener('click', e => {
@@ -62,18 +82,25 @@ document.addEventListener('click', e => {
 
 /* ---------- settings, rota, working-day maths ---------- */
 
+const DEFAULT_SETTINGS = {
+  holidayYearStart: '2027-01-01', holidayYearEnd: '2027-12-31',
+  initialAllowanceTeams: 28, initialAllowanceFiveDay: 28, bankHolidayCount: 8,
+  team1Accrual: 3, team2Accrual: 4,
+  leaveTypes: ['Annual Leave', 'Sick Leave', 'Public Holiday', 'Unpaid', 'Other'],
+  teams: ['5-Day Week', 'Team 1', 'Team 2']
+};
+
 let _settings = null;
 async function getSettings() {
   if (_settings) return _settings;
-  const snap = await db.doc('settings/company').get();
-  _settings = snap.exists ? snap.data() : {
-    holidayYearStart: '2027-01-01', holidayYearEnd: '2027-12-31',
-    initialAllowanceTeams: 28, initialAllowanceFiveDay: 28, bankHolidayCount: 8,
-    team1Accrual: 3, team2Accrual: 4,
-    leaveTypes: ['Annual Leave', 'Sick Leave', 'Public Holiday', 'Unpaid', 'Other'],
-    teams: ['5-Day Week', 'Team 1', 'Team 2']
-  };
-  return _settings;
+  try {
+    const snap = await db.doc('settings/company').get();
+    _settings = { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+    return _settings;
+  } catch (err) {
+    reportError(err, 'Could not load the company settings (using defaults)');
+    return DEFAULT_SETTINGS;
+  }
 }
 
 async function getRota(from, to) {
@@ -84,24 +111,65 @@ async function getRota(from, to) {
   return map;
 }
 
-// Does this date count as a leave day for this team? (weekends, bank holidays,
-// the shutdown and the team's own rest day never use up allowance)
-function isLeaveDay(dateStr, team, rota) {
+async function getRotaSafe(set) {
+  try { return await getRota(set.holidayYearStart, set.holidayYearEnd); }
+  catch (err) { reportError(err, 'Could not load the rota'); return {}; }
+}
+
+// Christmas shutdown periods: two boxes entered by an admin on the Employees page
+function getShutdowns(set) {
+  if (Array.isArray(set.shutdowns)) return set.shutdowns;
+  return [
+    { label: 'Christmas shutdown 2026–2027', start: '', end: '' },
+    { label: 'Christmas shutdown 2027–2028', start: set.shutdownStart || '', end: set.shutdownEnd || '' }
+  ];
+}
+
+function inShutdown(dateStr, set) {
+  return getShutdowns(set).some(s => s.start && s.end && dateStr >= s.start && dateStr <= s.end);
+}
+
+function isWeekend(dateStr) {
   const dow = new Date(dateStr + 'T12:00:00').getDay();
-  if (dow === 0 || dow === 6) return false;
+  return dow === 0 || dow === 6;
+}
+
+// A day this team would normally work (not a weekend, bank holiday or their rest day)
+function isWorkingDay(dateStr, team, rota) {
+  if (isWeekend(dateStr)) return false;
   const r = rota[dateStr];
   if (!r) return true;
-  if (r.bankHoliday || r.companyShutdown) return false;
+  if (r.bankHoliday) return false;
   if (team === 'Team 1' && r.team1Off) return false;
   if (team === 'Team 2' && r.team2Off) return false;
   return true;
 }
 
-function leaveDays(a, b, team, rota) {
+// A day an employee can book as leave: a working day that is not in a shutdown
+function isLeaveDay(dateStr, team, rota, set) {
+  return isWorkingDay(dateStr, team, rota) && !inShutdown(dateStr, set);
+}
+
+function leaveDays(a, b, team, rota, set) {
   const d = new Date(a + 'T12:00:00'), end = new Date(b + 'T12:00:00');
   let n = 0;
-  while (d <= end) { if (isLeaveDay(iso(d), team, rota)) n++; d.setDate(d.getDate() + 1); }
+  while (d <= end) { if (isLeaveDay(iso(d), team, rota, set)) n++; d.setDate(d.getDate() + 1); }
   return n;
+}
+
+// Working days inside the holiday year that fall in a shutdown: these come off everyone's allowance
+function shutdownDays(team, set, rota) {
+  const days = new Set();
+  getShutdowns(set).forEach(s => {
+    if (!s.start || !s.end) return;
+    const d = new Date(s.start + 'T12:00:00'), end = new Date(s.end + 'T12:00:00');
+    while (d <= end) {
+      const k = iso(d);
+      if (k >= set.holidayYearStart && k <= set.holidayYearEnd && isWorkingDay(k, team, rota)) days.add(k);
+      d.setDate(d.getDate() + 1);
+    }
+  });
+  return days.size;
 }
 
 function longServiceDays(start, set) {
@@ -121,17 +189,21 @@ function defaultsFor(team, start, set) {
   };
 }
 
-function summarise(emp, reqs, logs, set) {
+// Days taken off the allowance by a request (a birthday day is not deducted)
+const deducted = r => (r.deduct !== undefined ? r.deduct : r.days);
+
+function summarise(emp, reqs, logs, set, rota) {
   const inYear = d => d >= set.holidayYearStart && d <= set.holidayYearEnd;
   const logged = sum(logs.filter(l => l.leaveType === 'Annual Leave' && inYear(l.date)), l => l.days);
-  const approved = sum(reqs.filter(r => r.status === 'approved' && inYear(r.startDate)), r => r.days);
-  const pending = sum(reqs.filter(r => r.status === 'pending' && inYear(r.startDate)), r => r.days);
+  const approved = sum(reqs.filter(r => r.status === 'approved' && inYear(r.startDate)), deducted);
+  const pending = sum(reqs.filter(r => r.status === 'pending' && inYear(r.startDate)), deducted);
+  const shutdown = shutdownDays(emp.team, set, rota || {});
   const sick = logs.filter(l => l.leaveType === 'Sick Leave');
   const sickDays = sum(sick, l => l.days);
   const total = emp.allowanceDays + emp.carryoverDays + emp.accrualDays + emp.longServiceDays;
   return {
-    total, used: logged + approved, pending,
-    available: total - logged - approved - pending,
+    total, booked: logged + approved, shutdown, used: logged + approved + shutdown, pending,
+    available: total - logged - approved - shutdown - pending,
     sickDays, bradford: sick.length * sick.length * sickDays
   };
 }
@@ -159,7 +231,18 @@ async function guard(opts = {}) {
   const emp = eq.empty ? null : { id: eq.docs[0].id, ...eq.docs[0].data() };
 
   buildNav(p, emp);
+  if (p.role === 'admin') keepNameListFresh();
   return { user, p, emp };
+}
+
+// Admins refresh the public sign-in name list once per browser session
+function keepNameListFresh() {
+  try {
+    if (sessionStorage.getItem('namesSynced')) return;
+    syncDirectory()
+      .then(() => sessionStorage.setItem('namesSynced', '1'))
+      .catch(err => console.warn('Sign-in name list not refreshed:', err.message));
+  } catch (_) { /* storage unavailable */ }
 }
 
 function buildNav(p, emp) {
@@ -232,11 +315,14 @@ async function loadLoginNames() {
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
     sel.innerHTML = '<option value="">Select your name…</option>' +
       people.map(x => `<option${x.emailLogin ? ' data-email="1"' : ''}>${esc(x.displayName)}</option>`).join('') + other;
-    if (!people.length) sel.value = '__other';
+    if (!people.length) {
+      sel.value = '__other';
+      say('message', 'The name list has not been set up yet. Type your name below; an administrator can fill the list from the Employees page.');
+    }
   } catch (err) {
     sel.innerHTML = other;
     sel.value = '__other';
-    say('message', 'Could not load the list of names – type your name instead.', 'error');
+    say('message', 'Could not load the list of names (' + (err.code || err.message) + '). Type your name instead.', 'error');
   }
   toggleOther();
 }
@@ -285,6 +371,17 @@ async function syncDirectory() {
   });
   if (changes) await batch.commit();
   return changes;
+}
+
+async function syncNamesClicked() {
+  say('empNote', 'Updating the sign-in list…');
+  try {
+    const n = await syncDirectory();
+    say('empNote', n ? `Sign-in list updated (${n} changes).` : 'Sign-in list is already up to date.', 'ok');
+  } catch (err) {
+    say('empNote', 'Could not update the sign-in list: ' + (err.code || err.message), 'error');
+    reportError(err, 'Sign-in list');
+  }
 }
 
 /* ==========================================================================
@@ -352,8 +449,20 @@ async function runSetup() {
     }
 
     /* 2. Settings, bank holidays, rota */
-    await db.doc('settings/company').set({ ...S.company, updatedAt: TS() });
-    log('✓ settings/company written');
+    const settingsRef = db.doc('settings/company');
+    if ((await settingsRef.get()).exists) {
+      log('settings/company already exists – kept as it is', 'skip');
+    } else {
+      await settingsRef.set({
+        ...S.company,
+        shutdowns: [
+          { label: 'Christmas shutdown 2026–2027', start: '', end: '' },
+          { label: 'Christmas shutdown 2027–2028', start: S.company.shutdownStart, end: S.company.shutdownEnd }
+        ],
+        updatedAt: TS()
+      });
+      log('✓ settings/company written');
+    }
 
     const bhBatch = db.batch();
     S.bankHolidays.forEach(([date, name]) => bhBatch.set(db.collection('bankHolidays').doc(date), { date, name }));
@@ -429,7 +538,7 @@ async function runSetup() {
 }
 
 /* ==========================================================================
-   Employee page – balance, request form, history
+   Employee page – balance, request form (with birthday day), history
    ========================================================================== */
 
 async function initEmployee() {
@@ -442,30 +551,34 @@ async function initEmployee() {
   }
   const e = s.emp;
   const set = await getSettings();
-  const rota = await getRota(set.holidayYearStart, set.holidayYearEnd);
+  const rota = await getRotaSafe(set);
+  const year = Number(set.holidayYearStart.slice(0, 4));
   $('hello').textContent = 'Hello, ' + e.displayName;
   $('employee').value = e.displayName;
   $('yearInfo').textContent = `Holiday year ${dateGB(set.holidayYearStart)} – ${dateGB(set.holidayYearEnd)} · ${e.team}`;
 
-  const [rq, lg] = await Promise.all([
+  const [rq, lg, bd] = await Promise.all([
     db.collection('holidayRequests').where('userId', '==', s.user.uid).get(),
-    db.collection('holidayLog').where('userId', '==', s.user.uid).get()
+    db.collection('holidayLog').where('userId', '==', s.user.uid).get(),
+    db.collection('birthdayUse').where('userId', '==', s.user.uid).get()
   ]);
   const reqs = rq.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => y.startDate.localeCompare(x.startDate));
   const logs = lg.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => y.date.localeCompare(x.date));
-  const t = summarise(e, reqs, logs, set);
+  const birthdayUsed = bd.docs.map(d => d.data()).find(b => b.year === year);
+  const t = summarise(e, reqs, logs, set, rota);
 
   $('tiles').innerHTML = `
     <div class="tile primary"><div class="label">Available to book</div><div class="value">${fmt(t.available)}</div></div>
     <div class="tile"><div class="label">Total entitlement</div><div class="value">${fmt(t.total)}</div></div>
-    <div class="tile"><div class="label">Used</div><div class="value">${fmt(t.used)}</div></div>
-    <div class="tile"><div class="label">Awaiting approval</div><div class="value">${fmt(t.pending)}</div></div>`;
-  $('breakdown').textContent = `Entitlement = annual allowance ${fmt(e.allowanceDays)} + carryover ${fmt(e.carryoverDays)} + bank holiday accrual ${fmt(e.accrualDays)} + long service ${fmt(e.longServiceDays)}. Sick days recorded: ${fmt(t.sickDays)} · Bradford Factor: ${fmt(t.bradford)}.`;
+    <div class="tile"><div class="label">Used (incl. shutdown)</div><div class="value">${fmt(t.used)}</div></div>
+    <div class="tile"><div class="label">Awaiting approval</div><div class="value">${fmt(t.pending)}</div></div>
+    <div class="tile"><div class="label">Company shutdown</div><div class="value">${fmt(t.shutdown)}</div></div>`;
+  $('breakdown').textContent = `Entitlement = annual allowance ${fmt(e.allowanceDays)} + carryover ${fmt(e.carryoverDays)} + bank holiday accrual ${fmt(e.accrualDays)} + long service ${fmt(e.longServiceDays)}. Used = ${fmt(t.booked)} booked + ${fmt(t.shutdown)} company shutdown. Sick days recorded: ${fmt(t.sickDays)} · Bradford Factor: ${fmt(t.bradford)}.`;
 
   $('rows').innerHTML = reqs.length ? reqs.map(x => `
     <tr>
       <td>${esc(dateGB(x.startDate))}${x.endDate !== x.startDate ? ' – ' + esc(dateGB(x.endDate)) : ''} ${x.session === 'AM' || x.session === 'PM' ? esc(x.session) : ''}</td>
-      <td>${fmt(x.days)}</td>
+      <td>${fmt(x.days)}${x.birthday ? ' <small>(incl. birthday day)</small>' : ''}</td>
       <td><span class="pill ${esc(x.status)}">${esc(x.status)}</span></td>
       <td>${esc(x.reason)}${x.adminNote ? ` <small>(${esc(x.adminNote)})</small>` : ''}</td>
     </tr>`).join('') : '<tr><td colspan="4" class="empty">No requests yet.</td></tr>';
@@ -474,34 +587,63 @@ async function initEmployee() {
     <tr><td>${esc(dateGB(x.date))}</td><td>${esc(x.leaveType)}</td><td>${fmt(x.days)}</td><td>${esc(x.notes)}</td></tr>`).join('')
     : '<tr><td colspan="4" class="empty">Nothing recorded.</td></tr>';
 
-  const preview = () => {
-    const a = $('start').value, b = $('end').value, k = $('kind').value;
-    if (!a || !b || b < a) return say('preview', '');
+  /* birthday day: once per holiday year, greyed out when used */
+  const cb = $('birthday');
+  cb.checked = false;
+  if (birthdayUsed) {
+    const used = reqs.find(x => x.id === birthdayUsed.requestId);
+    cb.disabled = true;
+    $('birthdayLabel').classList.add('disabled');
+    say('birthdayNote', `Your ${year} birthday day has already been used${used ? ' (' + dateGB(used.startDate) + ')' : ''}.`);
+  } else {
+    cb.disabled = false;
+    $('birthdayLabel').classList.remove('disabled');
+    say('birthdayNote', `Once a year. It is an extra day, so it does not come off your allowance.`);
+  }
+
+  const calc = () => {
+    const a = $('start').value, k = $('kind').value;
+    const b = k === 'FULL' ? $('end').value : a;
     if (k !== 'FULL') $('end').value = a;
-    const days = k === 'FULL' ? leaveDays(a, b, e.team, rota) : (isLeaveDay(a, e.team, rota) ? 0.5 : 0);
-    say('preview', days ? `This will use ${fmt(days)} day(s) of your allowance.` : 'No working days in that range (weekend, bank holiday, shutdown or your rest day).');
+    const days = !a || !b || b < a ? 0 : k === 'FULL' ? leaveDays(a, b, e.team, rota, set) : (isLeaveDay(a, e.team, rota, set) ? 0.5 : 0);
+    return { a, b, k, days, deduct: days - (cb.checked ? 1 : 0) };
   };
-  ['start', 'end', 'kind'].forEach(id => { $(id).onchange = preview; });
+
+  const preview = () => {
+    const c = calc();
+    if (!c.a || !$('end').value) return say('preview', '');
+    if (!c.days) return say('preview', 'No bookable days in that range (weekend, bank holiday, company shutdown or your rest day).');
+    say('preview', cb.checked
+      ? `${fmt(c.days)} day(s) requested; the birthday day covers 1, so ${fmt(Math.max(c.deduct, 0))} day(s) come off your allowance.`
+      : `This will use ${fmt(c.days)} day(s) of your allowance.`);
+  };
+  ['start', 'end', 'kind', 'birthday'].forEach(id => { $(id).onchange = preview; });
 
   $('request').onsubmit = async ev => {
     ev.preventDefault();
-    const k = $('kind').value;
-    const a = $('start').value;
-    const b = k === 'FULL' ? $('end').value : a;
-    if (!a || !b || b < a) return say('note', 'Check your dates.', 'error');
-    if (a < set.holidayYearStart || b > set.holidayYearEnd) return say('note', `Requests are currently open for ${dateGB(set.holidayYearStart)} – ${dateGB(set.holidayYearEnd)} only.`, 'error');
-    const days = k === 'FULL' ? leaveDays(a, b, e.team, rota) : (isLeaveDay(a, e.team, rota) ? 0.5 : 0);
-    if (days <= 0) return say('note', 'No working days in that range.', 'error');
-    if (days > t.available) return say('note', `Not enough allowance (${fmt(t.available)} days available).`, 'error');
-    const clash = reqs.some(r => r.status !== 'rejected' && r.startDate <= b && r.endDate >= a && (r.session === 'FULL' || k === 'FULL' || r.session === k));
+    const c = calc();
+    if (!c.a || !c.b || c.b < c.a) return say('note', 'Check your dates.', 'error');
+    if (c.a < set.holidayYearStart || c.b > set.holidayYearEnd) return say('note', `Requests are currently open for ${dateGB(set.holidayYearStart)} – ${dateGB(set.holidayYearEnd)} only.`, 'error');
+    if (c.days <= 0) return say('note', 'No bookable days in that range.', 'error');
+    if (cb.checked && (c.k !== 'FULL' || c.days < 1)) return say('note', 'Your birthday day must be part of a full-day request.', 'error');
+    if (c.deduct > t.available) return say('note', `Not enough allowance (${fmt(t.available)} days available).`, 'error');
+    const clash = reqs.some(r => r.status !== 'rejected' && r.startDate <= c.b && r.endDate >= c.a && (r.session === 'FULL' || c.k === 'FULL' || r.session === c.k));
     if (clash) return say('note', 'You already have a request covering those dates.', 'error');
 
     try {
       const ref = db.collection('holidayRequests').doc();
       const batch = db.batch();
-      batch.set(ref, { employeeId: e.id, userId: s.user.uid, startDate: a, endDate: b, days, session: k, reason: $('reason').value.trim(), status: 'pending', createdAt: TS() });
+      const data = {
+        employeeId: e.id, userId: s.user.uid, startDate: c.a, endDate: c.b, days: c.days, deduct: c.deduct,
+        session: c.k, birthday: cb.checked, reason: $('reason').value.trim(), status: 'pending', createdAt: TS()
+      };
+      if (cb.checked) {
+        data.birthdayKey = `${s.user.uid}_${year}`;
+        batch.set(db.collection('birthdayUse').doc(data.birthdayKey), { userId: s.user.uid, employeeId: e.id, year, requestId: ref.id, createdAt: TS() });
+      }
+      batch.set(ref, data);
       // Minimal public record for the shared calendar (initials + dates only)
-      batch.set(db.collection('calendarEntries').doc(ref.id), { employeeId: e.id, initials: e.initials, startDate: a, endDate: b, session: k, status: 'pending' });
+      batch.set(db.collection('calendarEntries').doc(ref.id), { employeeId: e.id, initials: e.initials, startDate: c.a, endDate: c.b, session: c.k, status: 'pending' });
       await batch.commit();
       $('request').reset();
       $('employee').value = e.displayName;
@@ -512,36 +654,53 @@ async function initEmployee() {
 }
 
 /* ==========================================================================
-   Admin – approval queue
+   Admin – approval queue + calendar
    ========================================================================== */
+
+let NAMES = {};
 
 async function initAdmin() {
   const s = await guard({ admin: true });
   if (!s) return;
-  loadQueue();
+  await setupCalendar();
+  await loadQueue();
+  draw();
 }
 
 async function loadQueue() {
   try {
-    const [rs, es] = await Promise.all([
+    const [rs, es, cs] = await Promise.all([
       db.collection('holidayRequests').where('status', '==', 'pending').get(),
-      db.collection('employees').get()
+      db.collection('employees').get(),
+      db.collection('calendarEntries').get()
     ]);
     const emp = Object.fromEntries(es.docs.map(d => [d.id, d.data()]));
+    NAMES = Object.fromEntries(es.docs.map(d => [d.id, d.data().displayName]));
+    const entries = cs.docs.map(d => ({ id: d.id, ...d.data() }));
     const rows = rs.docs.map(d => ({ id: d.id, ...d.data() })).sort((x, y) => x.startDate.localeCompare(y.startDate));
-    $('pending').innerHTML = rows.length ? rows.map(x => `
+
+    $('pending').innerHTML = rows.length ? rows.map(x => {
+      const others = entries.filter(en => en.id !== x.id && en.startDate <= x.endDate && en.endDate >= x.startDate)
+        .map(en => `${esc(NAMES[en.employeeId] || en.initials)}${en.status === 'pending' ? ' <small>(pending)</small>' : ''}`);
+      return `
       <tr>
         <td>${esc(emp[x.employeeId]?.displayName || 'Unknown')}<br><small>${esc(emp[x.employeeId]?.team || '')}</small></td>
-        <td>${esc(dateGB(x.startDate))}${x.endDate !== x.startDate ? ' – ' + esc(dateGB(x.endDate)) : ''} ${x.session !== 'FULL' ? esc(x.session) : ''}</td>
-        <td>${fmt(x.days)}</td>
+        <td>
+          <button type="button" class="linkbtn" data-action="cal-goto" data-date="${esc(x.startDate)}">${esc(dateGB(x.startDate))}${x.endDate !== x.startDate ? ' – ' + esc(dateGB(x.endDate)) : ''}</button>
+          ${x.session !== 'FULL' ? esc(x.session) : ''}
+        </td>
+        <td>${fmt(x.days)}${x.birthday ? '<br><small>incl. birthday day</small>' : ''}</td>
         <td>${esc(x.reason)}</td>
+        <td>${others.length ? others.join('<br>') : '<small>Nobody else</small>'}</td>
         <td>
           <button type="button" class="small" data-action="approve" data-id="${esc(x.id)}">Approve</button>
           <button type="button" class="small red" data-action="reject" data-id="${esc(x.id)}">Reject</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="5" class="empty">Nothing waiting for approval.</td></tr>';
+      </tr>`;
+    }).join('') : '<tr><td colspan="6" class="empty">Nothing waiting for approval.</td></tr>';
   } catch (err) {
-    $('pending').innerHTML = `<tr><td colspan="5" class="note--error">${esc(err.message)}</td></tr>`;
+    $('pending').innerHTML = `<tr><td colspan="6" class="note--error">Could not load the queue: ${esc(err.message)}</td></tr>`;
+    reportError(err, 'Approval queue');
   }
 }
 
@@ -553,18 +712,23 @@ async function review(id, status) {
     if (n.trim()) upd.adminNote = n.trim();
   }
   try {
+    const reqSnap = await db.collection('holidayRequests').doc(id).get();
+    const req = reqSnap.data() || {};
     const batch = db.batch();
     batch.update(db.collection('holidayRequests').doc(id), upd);
     const cal = db.collection('calendarEntries').doc(id);
     if (status === 'approved') batch.update(cal, { status: 'approved' }); else batch.delete(cal);
+    // A rejected request frees the employee's birthday day again
+    if (status === 'rejected' && req.birthdayKey) batch.delete(db.collection('birthdayUse').doc(req.birthdayKey));
     await batch.commit();
     say('note', 'Request ' + status + '.', 'ok');
   } catch (err) { say('note', err.message, 'error'); }
-  loadQueue();
+  await loadQueue();
+  draw();
 }
 
 /* ==========================================================================
-   Admin – employees
+   Admin – employees (editable table, Christmas shutdown dates)
    ========================================================================== */
 
 let EMPS = [];
@@ -574,61 +738,168 @@ async function initEmployees() {
   if (!s) return;
   const set = await getSettings();
   window._me = s.user.uid;
-  const teamOptions = set.teams.map(t => `<option>${esc(t)}</option>`).join('');
-  $('eteam').innerHTML = teamOptions;
-  $('xteam').innerHTML = teamOptions;
+  $('eteam').innerHTML = set.teams.map(t => `<option>${esc(t)}</option>`).join('');
   $('newEmp').onsubmit = addEmployee;
-  $('editForm').onsubmit = saveEdit;
-  $('editCancel').onclick = () => $('editDlg').close();
+  $('shutdownForm').onsubmit = saveShutdowns;
+  ['s1start', 's1end', 's2start', 's2end'].forEach(id => { $(id).onchange = previewShutdown; });
+  $('emps').addEventListener('input', onCellEdit);
+  $('emps').addEventListener('change', onCellEdit);
   await renderEmployees();
-  syncDirectory().catch(err => console.warn('Login list not synced:', err.message));
 }
+
+function fillShutdownForm(set) {
+  const [a, b] = getShutdowns(set);
+  $('s1label').textContent = a.label;
+  $('s2label').textContent = b.label;
+  $('s1start').value = a.start || ''; $('s1end').value = a.end || '';
+  $('s2start').value = b.start || ''; $('s2end').value = b.end || '';
+}
+
+function shutdownFromForm(set) {
+  const [a, b] = getShutdowns(set);
+  return [
+    { label: a.label, start: $('s1start').value, end: $('s1end').value },
+    { label: b.label, start: $('s2start').value, end: $('s2end').value }
+  ];
+}
+
+let ROTA_CACHE = {};
+
+function previewShutdown() {
+  const set = { ...(_settings || DEFAULT_SETTINGS), shutdowns: shutdownFromForm(_settings || DEFAULT_SETTINGS) };
+  const per = team => shutdownDays(team, set, ROTA_CACHE);
+  say('shutdownInfo', `Days taken off the ${set.holidayYearStart.slice(0, 4)} allowance: 5-Day Week ${fmt(per('5-Day Week'))}, Team 1 ${fmt(per('Team 1'))}, Team 2 ${fmt(per('Team 2'))} (weekends, bank holidays and rest days are not counted).`);
+}
+
+async function saveShutdowns(ev) {
+  ev.preventDefault();
+  const set = await getSettings();
+  const list = shutdownFromForm(set);
+  for (const s of list) {
+    if (!!s.start !== !!s.end) return say('shutdownNote', `${s.label}: enter both a start and an end date, or leave both blank.`, 'error');
+    if (s.start && s.end < s.start) return say('shutdownNote', `${s.label}: the end date is before the start date.`, 'error');
+  }
+  try {
+    await db.doc('settings/company').set({ shutdowns: list, updatedAt: TS() }, { merge: true });
+    _settings = null;
+    say('shutdownNote', 'Shutdown dates saved. Every employee’s balance now includes them.', 'ok');
+    await renderEmployees();
+  } catch (err) { say('shutdownNote', err.message, 'error'); reportError(err, 'Saving shutdown dates'); }
+}
+
+const EDIT_FIELDS = ['team', 'department', 'startDate', 'allowanceDays', 'carryoverDays', 'accrualDays', 'longServiceDays'];
 
 async function renderEmployees() {
   const set = await getSettings();
-  let es, rs, ls, ps;
+  let es, rs, ls, ps, bs;
   try {
-    [es, rs, ls, ps] = await Promise.all([
+    [es, rs, ls, ps, bs] = await Promise.all([
       db.collection('employees').get(),
       db.collection('holidayRequests').get(),
       db.collection('holidayLog').get(),
-      db.collection('profiles').get()
+      db.collection('profiles').get(),
+      db.collection('birthdayUse').get()
     ]);
   } catch (err) {
-    $('emps').innerHTML = `<tr><td colspan="14" class="note--error">Could not load employees: ${esc(err.message)}</td></tr>`;
+    $('emps').innerHTML = `<tr><td colspan="16" class="note--error">Could not load employees: ${esc(err.message)}</td></tr>`;
+    reportError(err, 'Employees');
     return;
   }
+  const rota = await getRotaSafe(set);
+  ROTA_CACHE = rota;
+  fillShutdownForm(set);
+  previewShutdown();
+
   EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
   const reqs = rs.docs.map(d => d.data());
   const logs = ls.docs.map(d => d.data());
   const roles = Object.fromEntries(ps.docs.map(d => [d.id, d.data().role]));
+  const year = Number(set.holidayYearStart.slice(0, 4));
+  const birthdayUsers = new Set(bs.docs.map(d => d.data()).filter(b => b.year === year).map(b => b.userId));
+  const num = (field, v) => `<td><input class="cell num" type="number" step="0.5" min="0" data-field="${field}" value="${esc(v)}" aria-label="${field}"></td>`;
 
   $('empCount').textContent = `${EMPS.length} employees`;
   $('emps').innerHTML = EMPS.map(x => {
-    const t = summarise(x, reqs.filter(r => r.employeeId === x.id), logs.filter(l => l.employeeId === x.id), set);
+    const t = summarise(x, reqs.filter(r => r.employeeId === x.id), logs.filter(l => l.employeeId === x.id), set, rota);
     const role = roles[x.userId] || 'employee';
     const self = x.userId === window._me;
     return `
-      <tr>
+      <tr data-id="${esc(x.id)}">
         <td><b>${esc(x.displayName)}</b> <small>${esc(x.initials)}</small>${role === 'admin' ? ' <span class="pill admin">admin</span>' : ''}</td>
-        <td>${esc(x.team)}</td>
-        <td>${esc(x.department)}</td>
-        <td>${esc(dateGB(x.startDate))}</td>
-        <td class="num">${fmt(x.allowanceDays)}</td>
-        <td class="num">${fmt(x.carryoverDays)}</td>
-        <td class="num">${fmt(x.accrualDays)}</td>
-        <td class="num">${fmt(x.longServiceDays)}</td>
+        <td><select class="cell" data-field="team" aria-label="Team">${set.teams.map(tm => `<option${tm === x.team ? ' selected' : ''}>${esc(tm)}</option>`).join('')}</select></td>
+        <td><input class="cell" data-field="department" value="${esc(x.department)}" aria-label="Department"></td>
+        <td><input class="cell" type="date" data-field="startDate" value="${esc(x.startDate)}" aria-label="Start date"></td>
+        ${num('allowanceDays', x.allowanceDays)}
+        ${num('carryoverDays', x.carryoverDays)}
+        ${num('accrualDays', x.accrualDays)}
+        ${num('longServiceDays', x.longServiceDays)}
         <td class="num"><b>${fmt(t.total)}</b></td>
+        <td class="num">${fmt(t.shutdown)}</td>
         <td class="num">${fmt(t.used)}</td>
         <td class="num"><b>${fmt(t.available)}</b></td>
         <td class="num">${fmt(t.sickDays)}</td>
         <td class="num ${bfClass(t.bradford)}">${fmt(t.bradford)}</td>
+        <td>${birthdayUsers.has(x.userId) ? 'Used' : '–'}</td>
         <td>
-          <button type="button" class="small ghost" data-action="emp-edit" data-id="${esc(x.id)}">Edit</button>
           <button type="button" class="small ghost" data-action="role-toggle" data-uid="${esc(x.userId)}" data-role="${role === 'admin' ? 'employee' : 'admin'}"${self ? ' disabled' : ''}>${role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
         </td>
       </tr>`;
-  }).join('') || '<tr><td colspan="14" class="empty">No employees yet – run the setup on the sign-in page.</td></tr>';
+  }).join('') || '<tr><td colspan="16" class="empty">No employees found in the employees collection.</td></tr>';
+  updateSaveBar();
+}
+
+function dirtyRows() { return Array.from($('emps').querySelectorAll('tr.dirty')); }
+
+function updateSaveBar() {
+  const n = dirtyRows().length;
+  $('saveAll').disabled = n === 0;
+  say('empNote', n ? `${n} unsaved ${n === 1 ? 'change' : 'changes'}.` : '');
+}
+
+// Editing the team or start date refills the figures the workbook calculated from them
+function onCellEdit(ev) {
+  const el = ev.target.closest('[data-field]');
+  const row = ev.target.closest('tr[data-id]');
+  if (!el || !row) return;
+  const set = _settings || DEFAULT_SETTINGS;
+  const field = el.dataset.field;
+  const get = f => row.querySelector(`[data-field="${f}"]`);
+  if (ev.type === 'change' && field === 'startDate') get('longServiceDays').value = longServiceDays(el.value, set);
+  if (ev.type === 'change' && field === 'team') {
+    const d = defaultsFor(el.value, get('startDate').value, set);
+    get('allowanceDays').value = d.allowanceDays;
+    get('accrualDays').value = d.accrualDays;
+  }
+  row.classList.add('dirty');
+  updateSaveBar();
+}
+
+async function saveEmployees() {
+  const rows = dirtyRows();
+  if (!rows.length) return;
+  const batch = db.batch();
+  for (const row of rows) {
+    const v = f => row.querySelector(`[data-field="${f}"]`).value;
+    const nums = ['allowanceDays', 'carryoverDays', 'accrualDays', 'longServiceDays'];
+    const upd = { department: v('department').trim(), team: v('team'), startDate: v('startDate') || null };
+    for (const f of nums) {
+      const n = parseFloat(v(f));
+      if (Number.isNaN(n) || n < 0) return say('empNote', 'Allowance figures must be numbers of 0 or more.', 'error');
+      upd[f] = n;
+    }
+    batch.update(db.collection('employees').doc(row.dataset.id), upd);
+  }
+  $('saveAll').disabled = true;
+  say('empNote', 'Saving…');
+  try {
+    await batch.commit();
+    await renderEmployees();
+    say('empNote', `Saved ${rows.length} ${rows.length === 1 ? 'employee' : 'employees'}.`, 'ok');
+  } catch (err) {
+    $('saveAll').disabled = false;
+    say('empNote', 'Could not save: ' + (err.code || err.message), 'error');
+    reportError(err, 'Saving employees');
+  }
 }
 
 async function addEmployee(ev) {
@@ -657,46 +928,18 @@ async function addEmployee(ev) {
     });
     batch.set(db.collection('loginDirectory').doc(uid), { displayName: name, emailLogin: !!$('eemail').value.trim() });
     await batch.commit();
-    say('note', `Created ${name}. Login: ${email}`, 'ok');
+    say('addNote', `Created ${name}. Login: ${email}`, 'ok');
     $('newEmp').reset();
     $('epw').value = DEFAULT_PW;
     renderEmployees();
-  } catch (err) { say('note', err.message, 'error'); }
+  } catch (err) { say('addNote', err.message, 'error'); }
   finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
-}
-
-function openEdit(id) {
-  const x = EMPS.find(e => e.id === id);
-  if (!x) return;
-  $('editName').textContent = x.displayName;
-  $('editId').value = id;
-  $('xdept').value = x.department || '';
-  $('xteam').value = x.team;
-  $('xstart').value = x.startDate || '';
-  $('xallow').value = x.allowanceDays;
-  $('xcarry').value = x.carryoverDays;
-  $('xaccr').value = x.accrualDays;
-  $('xlong').value = x.longServiceDays;
-  $('editDlg').showModal();
-}
-
-async function saveEdit(ev) {
-  ev.preventDefault();
-  const n = id => parseFloat($(id).value) || 0;
-  try {
-    await db.collection('employees').doc($('editId').value).update({
-      department: $('xdept').value.trim(), team: $('xteam').value, startDate: $('xstart').value || null,
-      allowanceDays: n('xallow'), carryoverDays: n('xcarry'), accrualDays: n('xaccr'), longServiceDays: n('xlong')
-    });
-    $('editDlg').close();
-    renderEmployees();
-  } catch (err) { alert(err.message); }
 }
 
 async function toggleRole(uid, role) {
   if (!uid || !confirm(`Change this account to "${role}"?`)) return;
   try { await db.collection('profiles').doc(uid).update({ role }); renderEmployees(); }
-  catch (err) { alert(err.message); }
+  catch (err) { reportError(err, 'Changing role'); }
 }
 
 /* ==========================================================================
@@ -709,14 +952,21 @@ async function initLog() {
   const s = await guard({ admin: true });
   if (!s) return;
   const set = await getSettings();
-  const es = await db.collection('employees').get();
-  EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
-  const opts = EMPS.map(x => `<option value="${esc(x.id)}">${esc(x.displayName)}</option>`).join('');
-  $('lemp').innerHTML = opts;
-  $('lfilter').innerHTML = '<option value="">All employees</option>' + opts;
   $('ltype').innerHTML = set.leaveTypes.map(t => `<option>${esc(t)}</option>`).join('');
   $('lfilter').onchange = renderLog;
   $('logForm').onsubmit = addLog;
+
+  try {
+    const es = await db.collection('employees').get();
+    EMPS = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  } catch (err) {
+    reportError(err, 'Could not load the employee list');
+    $('lemp').innerHTML = '<option value="">Employees could not be loaded</option>';
+    return;
+  }
+  const opts = EMPS.map(x => `<option value="${esc(x.id)}">${esc(x.displayName)}</option>`).join('');
+  $('lemp').innerHTML = opts || '<option value="">No employees found</option>';
+  $('lfilter').innerHTML = '<option value="">All employees</option>' + opts;
   await loadLog();
 }
 
@@ -727,6 +977,7 @@ async function loadLog() {
     renderLog();
   } catch (err) {
     $('logRows').innerHTML = `<tr><td colspan="6" class="note--error">Could not load the log: ${esc(err.message)}</td></tr>`;
+    reportError(err, 'Holiday log');
   }
 }
 
@@ -764,29 +1015,43 @@ async function deleteLog(id) {
 }
 
 /* ==========================================================================
-   Calendar – approved/pending leave + the 2027 rota
+   Calendar – approved/pending leave + the rota + shutdown (also used on the approvals page)
    ========================================================================== */
 
 let monthDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-async function initCalendar() {
-  const s = await guard();
-  if (!s) return;
+async function setupCalendar() {
   const set = await getSettings();
   const today = iso(new Date());
   if (today < set.holidayYearStart || today > set.holidayYearEnd) {
     const [y, m] = set.holidayYearStart.split('-').map(Number);
     monthDate = new Date(y, m - 1, 1);
   }
-  const bh = await db.collection('bankHolidays').orderBy(firebase.firestore.FieldPath.documentId()).get();
-  $('bhRows').innerHTML = bh.docs.map(d => `<tr><td>${esc(dateGB(d.id))}</td><td>${esc(d.data().name)}</td></tr>`).join('')
-    || '<tr><td colspan="2" class="empty">None loaded.</td></tr>';
+}
+
+async function initCalendar() {
+  const s = await guard();
+  if (!s) return;
+  await setupCalendar();
+  try {
+    const bh = await db.collection('bankHolidays').orderBy(firebase.firestore.FieldPath.documentId()).get();
+    $('bhRows').innerHTML = bh.docs.map(d => `<tr><td>${esc(dateGB(d.id))}</td><td>${esc(d.data().name)}</td></tr>`).join('')
+      || '<tr><td colspan="2" class="empty">None loaded.</td></tr>';
+  } catch (err) { reportError(err, 'Bank holidays'); }
   draw();
 }
 
 function changeMonth(n) { monthDate.setMonth(monthDate.getMonth() + n); draw(); }
 
+function gotoMonth(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  monthDate = new Date(y, m - 1, 1);
+  draw();
+  $('grid').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function draw() {
+  const set = await getSettings();
   const y = monthDate.getFullYear(), m = monthDate.getMonth();
   const first = new Date(y, m, 1), last = new Date(y, m + 1, 0);
   const fIso = iso(first), lIso = iso(last);
@@ -801,27 +1066,27 @@ async function draw() {
     entries = es.docs.map(d => d.data()).filter(x => x.endDate >= fIso);
     rota = r;
     say('calnote', '');
-  } catch (err) { say('calnote', err.message, 'error'); }
+  } catch (err) { say('calnote', 'Could not load the calendar: ' + (err.code || err.message), 'error'); }
 
   let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<div class="head">${x}</div>`).join('');
   for (let i = 0; i < (first.getDay() + 6) % 7; i++) html += '<div class="day blank"></div>';
 
   for (let d = 1; d <= last.getDate(); d++) {
-    const dt = new Date(y, m, d), k = iso(dt), r = rota[k] || {};
-    const weekend = dt.getDay() === 0 || dt.getDay() === 6;
-    const cls = ['day', weekend ? 'off' : '', r.bankHoliday ? 'bank' : '', r.companyShutdown ? 'shut' : ''].filter(Boolean).join(' ');
+    const k = iso(new Date(y, m, d)), r = rota[k] || {};
+    const shut = inShutdown(k, set);
+    const cls = ['day', isWeekend(k) ? 'off' : '', r.bankHoliday ? 'bank' : '', shut ? 'shut' : ''].filter(Boolean).join(' ');
 
     let tags = '';
-    if (!weekend && !r.bankHoliday && !r.companyShutdown) {
+    if (!isWeekend(k) && !r.bankHoliday && !shut) {
       if (r.team1Off) tags += '<span class="tag t1">T1 off</span>';
       if (r.team2Off) tags += '<span class="tag t2">T2 off</span>';
     }
     if (r.bankHoliday && r.team1Accrued) tags += '<span class="tag accrue">+1 T1</span>';
     if (r.bankHoliday && r.team2Accrued) tags += '<span class="tag accrue">+1 T2</span>';
-    if (r.companyShutdown) tags += '<span class="tag">Shutdown</span>';
+    if (shut) tags += '<span class="tag">Shutdown</span>';
 
     const chips = entries.filter(x => x.startDate <= k && x.endDate >= k)
-      .map(x => `<span class="chip ${esc(x.status)}">${esc(x.initials)}${x.session !== 'FULL' ? ' ' + esc(x.session) : ''}</span>`).join('');
+      .map(x => `<span class="chip ${esc(x.status)}" title="${esc(NAMES[x.employeeId] || x.initials)}">${esc(x.initials)}${x.session !== 'FULL' ? ' ' + esc(x.session) : ''}</span>`).join('');
 
     html += `<div class="${cls}"><b>${d}</b>${r.bankHoliday ? `<small>${esc(r.label)}</small>` : ''}<div>${tags}</div><div>${chips}</div></div>`;
   }
