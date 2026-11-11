@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Employees</title>
+  <link rel="stylesheet" href="assets/style.css?v=3">
+</head>
+<body data-page="employees">
+  <header class="topbar">
+    <a class="brand" href="employee.html">Holiday Tracker</a>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
+
+  <main>
+    <h1>Employees</h1>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Current employees</h2>
+        <span id="empCount" class="lead"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Team</th><th>Department</th><th>Start</th>
+              <th class="num">Allow.</th><th class="num">Carry</th><th class="num">Accrual</th><th class="num">Long svc</th>
+              <th class="num">Total</th><th class="num">Used</th><th class="num">Left</th>
+              <th class="num">Sick</th><th class="num">Bradford</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="emps"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Add employee</h2>
+      <p class="lead">Leave allowance fields blank to use the company defaults (allowance, bank holiday accrual and long service are worked out from the team and start date).</p>
+      <form id="newEmp">
+        <div class="form-grid">
+          <div>
+            <label for="ename">Full name</label>
+            <input id="ename" required>
+          </div>
+          <div>
+            <label for="eemail">Login email <span class="hint">optional – blank = log in by name; a real email allows self-service reset</span></label>
+            <input id="eemail" type="email">
+          </div>
+          <div>
+            <label for="epw">Temporary password</label>
+            <input id="epw" required minlength="6" value="000000">
+          </div>
+          <div>
+            <label for="erole">Role</label>
+            <select id="erole"><option value="employee">Employee</option><option value="admin">Admin</option></select>
+          </div>
+          <div>
+            <label for="edept">Department</label>
+            <input id="edept">
+          </div>
+          <div>
+            <label for="eteam">Team</label>
+            <select id="eteam"></select>
+          </div>
+          <div>
+            <label for="estart">Start date</label>
+            <input id="estart" type="date">
+          </div>
+          <div>
+            <label for="eallow">Annual allowance (days)</label>
+            <input id="eallow" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="ecarry">Carryover days</label>
+            <input id="ecarry" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="eaccr">Bank holiday accrual</label>
+            <input id="eaccr" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="elong">Long service days</label>
+            <input id="elong" type="number" step="0.5">
+          </div>
+        </div>
+        <button type="submit">Create account</button>
+        <p id="note" class="note" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="editDlg">
+    <form id="editForm">
+      <h2>Edit <span id="editName"></span></h2>
+      <input type="hidden" id="editId">
+      <div class="form-grid">
+        <div><label for="xdept">Department</label><input id="xdept"></div>
+        <div><label for="xteam">Team</label><select id="xteam"></select></div>
+        <div><label for="xstart">Start date</label><input id="xstart" type="date"></div>
+        <div><label for="xallow">Annual allowance</label><input id="xallow" type="number" step="0.5"></div>
+        <div><label for="xcarry">Carryover days</label><input id="xcarry" type="number" step="0.5"></div>
+        <div><label for="xaccr">Bank holiday accrual</label><input id="xaccr" type="number" step="0.5"></div>
+        <div><label for="xlong">Long service days</label><input id="xlong" type="number" step="0.5"></div>
+      </div>
+      <button type="submit">Save</button>
+      <button type="button" class="ghost" id="editCancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js?v=3"></script>
+  <script src="assets/app.js?v=3"></script>
+</body>
+</html>
