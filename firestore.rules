@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function profilePath(uid) { return /databases/$(database)/documents/profiles/$(uid); }
+    function setupPath() { return /databases/$(database)/documents/settings/setup; }
+
+    function signedIn() { return request.auth != null; }
+
+    // Anyone with a profile document (employee or admin)
+    function isStaff() { return signedIn() && exists(profilePath(request.auth.uid)); }
+
+    function isAdmin() {
+      return isStaff() && get(profilePath(request.auth.uid)).data.role == 'admin';
+    }
+
+    function employeeDoc(id) { return get(/databases/$(database)/documents/employees/$(id)).data; }
+
+    // profiles/{uid}
+    match /profiles/{uid} {
+      allow read: if signedIn() && (uid == request.auth.uid || isAdmin());
+      allow create: if isAdmin()
+        // First-run bootstrap: the very first admin may create their own profile,
+        // but only in the same batch that creates settings/setup (which can only exist once).
+        || (uid == request.auth.uid
+            && request.resource.data.role == 'admin'
+            && !exists(setupPath())
+            && existsAfter(setupPath()));
+      allow delete: if isAdmin();
+      allow update: if isAdmin()
+        || (uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChangePassword'])
+            && request.resource.data.mustChangePassword == false);
+    }
+
+    // settings/{doc}: company settings (readable by staff); settings/setup is the one-time bootstrap marker
+    match /settings/{doc} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+      allow create: if doc == 'setup'
+        && signedIn()
+        && !exists(setupPath())
+        && existsAfter(profilePath(request.auth.uid))
+        && getAfter(profilePath(request.auth.uid)).data.role == 'admin';
+    }
+
+    // employees/{id}: own record readable; admins manage all
+    match /employees/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // holidayRequests/{id}: private to owner + admins
+    match /holidayRequests/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isStaff()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.days > 0
+        && employeeDoc(request.resource.data.employeeId).userId == request.auth.uid;
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'reviewedAt', 'reviewedBy', 'adminNote']);
+      allow delete: if false;
+    }
+
+    // holidayLog/{id}: admin-entered leave/sickness records; employees can read their own
+    match /holidayLog/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // calendarEntries/{requestId}: initials + dates only, visible to all staff
+    match /calendarEntries/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.status == 'pending'
+        && employeeDoc(request.resource.data.employeeId).userId == request.auth.uid
+        && request.resource.data.initials == employeeDoc(request.resource.data.employeeId).initials
+        && getAfter(/databases/$(database)/documents/holidayRequests/$(id)).data.employeeId
+             == request.resource.data.employeeId;
+      allow update, delete: if isAdmin();
+    }
+
+    // birthdayUse/{uid_year}: one birthday day per employee per holiday year.
+    // The document id makes a second use impossible: creating an existing id is blocked.
+    match /birthdayUse/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isStaff()
+        && request.resource.data.userId == request.auth.uid
+        && id == request.auth.uid + '_' + string(request.resource.data.year)
+        && getAfter(/databases/$(database)/documents/holidayRequests/$(request.resource.data.requestId)).data.userId
+             == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // loginDirectory/{uid}: display names for the sign-in dropdown. Public on purpose
+    // (names only, so people can pick themselves before signing in).
+    match /loginDirectory/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // rotaDays/{yyyy-mm-dd} and bankHolidays/{yyyy-mm-dd}
+    match /rotaDays/{day} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    match /bankHolidays/{day} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+  }
+}
