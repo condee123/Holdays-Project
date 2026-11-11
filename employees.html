@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Employees</title>
-  <link rel="stylesheet" href="assets/style.css?v=4">
+  <link rel="stylesheet" href="assets/style.css?v=5">
 </head>
 
 <body data-page="employees">
@@ -52,6 +52,17 @@
         <p id="shutdownInfo" class="note"></p>
         <p id="shutdownNote" class="note" role="status" aria-live="polite"></p>
       </form>
+    </section>
+
+    <section class="card">
+      <h2>Office TV calendar login</h2>
+      <p class="lead">
+        A read-only login called <b>Calendar</b> (password 000000) that shows only the calendar page,
+        with a drop-down for how many months to display. It sees leave initials and dates, nothing else.
+      </p>
+      <button type="button" id="displayBtn" data-action="create-display">Create the Calendar login</button>
+      <p id="displayInfo" class="note"></p>
+      <p id="displayNote" class="note" role="status" aria-live="polite"></p>
     </section>
 
     <section class="card">
@@ -166,8 +177,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="assets/config.js?v=4"></script>
-  <script src="assets/app.js?v=4"></script>
+  <script src="assets/config.js?v=5"></script>
+  <script src="assets/app.js?v=5"></script>
 </body>
 
 </html>
