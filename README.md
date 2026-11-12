@@ -1,6 +1,23 @@
-# Company Holiday Tracker (Firebase edition)
+# Company Site: Holiday Tracker + Timesheet Log (Firebase edition)
 
 Static site for GitHub Pages + Firebase Authentication + Cloud Firestore. All data comes from `Company_Holiday_Tracker.xlsx` via the one-time setup button on the sign-in page.
+
+## Timesheet Log (new)
+Sign in on `index.html`, then `home.html` offers **Holiday Tracker** or **Timesheet Log**. Both use the same logins.
+
+| File | Purpose |
+|---|---|
+| `home.html` | Project chooser. Timesheet Log is greyed out for anyone not on the timesheet list; admins always see everything |
+| `timesheet.html` | Employee weekly timesheet (Mon-Sun), saved automatically as they type, then Save & submit |
+| `timesheet-admin.html` | Admin: status of everyone expected to fill in a timesheet, review and approve each job, edit the Assigned by / Van reg drop-downs, week 1 date |
+| `timesheet-people.html` | Admin: tick who is expected to fill in timesheets (this also controls who can open the project) |
+| `assets/timesheet.js` | All Timesheet Log logic (needs `assets/app.js` too) |
+
+- **Week numbers** follow the tax year: week 1 is the Monday-to-Sunday week containing 1 April. An admin can change the week 1 date on the review page.
+- **Statuses**: Not completed (nothing entered), Partially complete (saved draft), Filled in (submitted), In review (admin opened it, not every job ticked) and Approved (every job ticked).
+- **Hours** = To minus From, shown as decimals (15 min = 0.25, 30 = 0.5, 45 = 0.75). A job that runs past midnight counts as the next day.
+- **Locking**: employees can edit while a timesheet is a draft or submitted. Once an admin opens it for review it is locked. "Send back to employee" unlocks it.
+- New Firestore collection `timesheets` (`{uid}_{weekStart}`), new `settings/timesheet` document, and a `timesheetRequired` flag on each employee. Republish `firestore.rules`.
 
 ## Files
 | File | Purpose |
