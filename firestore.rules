@@ -82,6 +82,28 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // timesheets/{uid_weekStart}: one document per employee per week.
+    // Employees can create and edit their own while it is a draft or submitted;
+    // once an admin starts the review (in_review / approved) only admins can change it.
+    match /timesheets/{id} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAdmin()
+        || (isStaff()
+            && request.resource.data.userId == request.auth.uid
+            && id == request.auth.uid + '_' + request.resource.data.weekStart
+            && request.resource.data.status in ['draft', 'submitted']
+            && employeeDoc(request.resource.data.employeeId).userId == request.auth.uid
+            && employeeDoc(request.resource.data.employeeId).timesheetRequired == true);
+      allow update: if isAdmin()
+        || (isStaff()
+            && resource.data.userId == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.weekStart == resource.data.weekStart
+            && resource.data.status in ['draft', 'submitted']
+            && request.resource.data.status in ['draft', 'submitted']);
+      allow delete: if isAdmin();
+    }
+
     // birthdayUse/{uid_year}: one birthday day per employee per holiday year.
     // The document id makes a second use impossible: creating an existing id is blocked.
     match /birthdayUse/{id} {
