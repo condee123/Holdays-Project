@@ -256,3 +256,71 @@ body.tv .tv-months.rows-3 .day { min-height: max(40px, calc((100vh - 420px) / 18
 /* ---------- Version stamp ---------- */
 
 .ver { text-align: center; color: #98a2b3; font-size: .75rem; padding: 12px 0 20px; }
+
+/* ==========================================================================
+   Home page and Timesheet Log
+   ========================================================================== */
+
+/* ---------- Project tiles ---------- */
+
+.projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
+.project {
+  display: block;
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  transition: box-shadow .15s, transform .15s;
+}
+a.project:hover { box-shadow: 0 6px 20px rgba(23, 32, 51, .12); transform: translateY(-2px); text-decoration: none; }
+.project h2 { font-size: 1.5rem; margin: 0 0 8px; color: var(--primary); }
+.project p { margin: 0; color: var(--muted); }
+.project.disabled { opacity: .55; background: #eef0f4; cursor: not-allowed; }
+.project.disabled h2 { color: var(--muted); }
+
+/* ---------- Week header ---------- */
+
+.week-head { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+.week-title { text-align: center; min-width: 16em; }
+.week-title strong { font-size: 1.25rem; }
+.week-title .lead { margin: 0; }
+.week-total { margin: 14px 0 6px; }
+
+/* ---------- Timesheet table ---------- */
+
+table.sheet { min-width: 1150px; }
+table.sheet th, table.sheet td { padding: 8px; vertical-align: top; }
+table.sheet th.chk, table.sheet td.chk { text-align: center; }
+table.sheet tr.first td { border-top: 3px solid #d0d7e4; }
+table.sheet td.daycell { background: #f8fafc; min-width: 110px; }
+table.sheet td.timecell { min-width: 190px; }
+table.sheet .cell { margin: 0; padding: 7px 8px; min-width: 120px; }
+table.sheet .cell.other { margin-top: 6px; }
+table.sheet textarea.cell { min-width: 170px; }
+.muted { color: var(--muted); }
+
+.tbox { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tlabel { width: 2.8em; color: var(--muted); font-size: .85rem; }
+.t { display: inline-flex; align-items: center; gap: 4px; }
+.t input { width: 4.6em; margin: 0; padding: 7px 4px 7px 8px; text-align: center; }
+.t input[type="number"]::-webkit-inner-spin-button,
+.t input[type="number"]::-webkit-outer-spin-button { opacity: 1; height: 28px; }
+
+.rowtools { display: flex; gap: 6px; margin-top: 6px; }
+.rowtools button { padding: 3px 12px; font-size: 1.1rem; line-height: 1.2; }
+
+/* ---------- Timesheet statuses ---------- */
+
+.pill.none { background: #eef0f4; color: var(--muted); }
+.pill.partial { background: var(--warn-bg); color: #93370d; }
+.pill.filled { background: #e0ecff; color: #1849a9; }
+.pill.in_review { background: #ece9fe; color: #5925dc; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 12px; }
+
+/* Timesheet pages use more of the screen so every column is visible */
+body[data-page^="ts-"] main { max-width: 1600px; }
+body[data-page^="ts-"] .topbar { padding-left: max(20px, calc((100% - 1600px) / 2)); padding-right: max(20px, calc((100% - 1600px) / 2)); }
+table.sheet { min-width: 1100px; }
+table.sheet .cell { min-width: 105px; }

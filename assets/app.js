@@ -8,10 +8,12 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
-const APP_VERSION = '7';
+const APP_VERSION = '8';
 const DEFAULT_PW = '000000';
 const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
 const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
+// Where people land after signing in: the home page with the two projects (the TV login goes to the calendar)
+const landingFor = role => (role === 'display' ? 'calendar.html' : 'home.html');
 const page = document.body.dataset.page;
 
 /* ---------- small helpers ---------- */
@@ -71,6 +73,7 @@ function normEmp(id, d) {
     ...d, id, displayName: name, hasName: !!name,
     initials: d.initials || (name ? makeInitials(name, new Set()) : '?'),
     team: d.team || '5-Day Week', department: d.department || '', startDate: d.startDate || '',
+    timesheetRequired: d.timesheetRequired === true,
     allowanceDays: num(d.allowanceDays), carryoverDays: num(d.carryoverDays),
     accrualDays: num(d.accrualDays), longServiceDays: num(d.longServiceDays)
   };
@@ -248,7 +251,7 @@ async function guard(opts = {}) {
 
   if (p.mustChangePassword && page !== 'change') { location.href = 'change-password.html'; return; }
   if (p.role === 'display' && page !== 'calendar') { location.href = 'calendar.html'; return; }
-  if (opts.admin && p.role !== 'admin') { location.href = homeFor(p.role); return; }
+  if (opts.admin && p.role !== 'admin') { location.href = (page || '').startsWith('ts-') ? landingFor(p.role) : homeFor(p.role); return; }
 
   const eq = await db.collection('employees').where('userId', '==', user.uid).limit(1).get();
   const emp = eq.empty ? null : normEmp(eq.docs[0].id, eq.docs[0].data());
@@ -271,24 +274,39 @@ function keepNameListFresh() {
 function buildNav(p, emp) {
   const nav = $('nav');
   if (!nav) return;
+  const brand = document.querySelector('.brand');
+  const out = '<button type="button" class="ghost small" data-action="logout">Log out</button>';
+  const area = page || '';
+
   if (p.role === 'display') {
-    nav.innerHTML = '<button type="button" class="ghost small" data-action="logout">Log out</button>';
-    const b = document.querySelector('.brand');
-    if (b) { b.textContent = 'Holiday Calendar'; b.removeAttribute('href'); }
+    nav.innerHTML = out;
+    if (brand) { brand.textContent = 'Holiday Calendar'; brand.removeAttribute('href'); }
     return;
   }
+  if (area === 'home') {
+    nav.innerHTML = out;
+    if (brand) { brand.textContent = 'Company Portal'; brand.removeAttribute('href'); }
+    return;
+  }
+
   const here = location.pathname.split('/').pop() || 'index.html';
-  const links = [];
-  if (p.role === 'admin') links.push(['admin.html', 'Approvals'], ['employees.html', 'Employees'], ['holiday-log.html', 'Holiday log']);
-  if (p.role !== 'admin' || emp) links.push(['employee.html', 'My holidays']);
-  links.push(['calendar.html', 'Calendar']);
-  nav.innerHTML = links.map(([h, t]) => `<a href="${h}"${h === here ? ' aria-current="page"' : ''}>${t}</a>`).join('') +
-    '<button type="button" class="ghost small" data-action="logout">Log out</button>';
-  const brand = document.querySelector('.brand');
-  if (brand && p.role === 'admin') brand.textContent = 'Holiday Tracker · Admin';
+  const admin = p.role === 'admin';
+  const links = [['home.html', 'Home']];
+  if (area.startsWith('ts-')) {
+    if (admin) links.push(['timesheet-admin.html', 'Review timesheets'], ['timesheet-people.html', 'Who fills in timesheets']);
+    if (emp && (admin || emp.timesheetRequired)) links.push(['timesheet.html', 'My timesheet']);
+    if (brand) { brand.textContent = admin ? 'Timesheet Log · Admin' : 'Timesheet Log'; brand.href = 'home.html'; }
+  } else {
+    if (admin) links.push(['admin.html', 'Approvals'], ['employees.html', 'Employees'], ['holiday-log.html', 'Holiday log']);
+    if (!admin || emp) links.push(['employee.html', 'My holidays']);
+    links.push(['calendar.html', 'Calendar']);
+    if (brand) { brand.textContent = admin ? 'Holiday Tracker · Admin' : 'Holiday Tracker'; brand.href = 'home.html'; }
+  }
+  nav.innerHTML = links.map(([h, t]) => `<a href="${h}"${h === here ? ' aria-current="page"' : ''}>${t}</a>`).join('') + out;
 }
 
 async function logout() {
+  try { sessionStorage.setItem('justLoggedOut', '1'); } catch (_) { /* ignore */ }
   // Never let a slow sign-out leave the page hanging
   try { await Promise.race([auth.signOut(), sleep(3000)]); } catch (_) { /* ignore */ }
   location.replace('index.html');
@@ -321,7 +339,7 @@ async function signIn(e) {
     if (!snap.exists) { await auth.signOut(); return say('message', 'Account not set up yet. Contact an administrator.', 'error'); }
     const p = snap.data();
     if (p.mustChangePassword) { location.href = 'change-password.html'; return; }
-    location.href = homeFor(p.role);
+    location.href = landingFor(p.role);
   } catch (err) {
     say('message', err.code === 'auth/too-many-requests' ? 'Too many attempts. Try again later.' : 'Name or password not recognised.', 'error');
   }
@@ -356,10 +374,22 @@ async function loadLoginNames() {
   toggleOther();
 }
 
-function initLogin() {
+async function initLogin() {
   $('login').onsubmit = signIn;
   $('who').onchange = toggleOther;
   if ($('setupBtn')) $('setupBtn').onclick = runSetup;
+
+  let justLeft = false;
+  try { justLeft = !!sessionStorage.getItem('justLoggedOut'); sessionStorage.removeItem('justLoggedOut'); } catch (_) { /* ignore */ }
+  if (!justLeft) {
+    const user = await currentUser();
+    if (user) {
+      try {
+        const ps = await db.collection('profiles').doc(user.uid).get();
+        if (ps.exists) { location.replace(landingFor(ps.data().role)); return; }
+      } catch (_) { /* fall through to the sign-in form */ }
+    }
+  }
   loadLoginNames();
 }
 
@@ -375,7 +405,7 @@ async function initChange() {
     try {
       await s.user.updatePassword(a);
       await db.collection('profiles').doc(s.user.uid).update({ mustChangePassword: false });
-      location.href = homeFor(s.p.role);
+      location.href = landingFor(s.p.role);
     } catch (err) {
       if (err.code === 'auth/requires-recent-login') { await auth.signOut(); location.href = 'index.html'; }
       else say('message', err.message, 'error');
@@ -1304,4 +1334,9 @@ function fileMismatch() {
 document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION}</footer>`);
 
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
-if (!fileMismatch() && INIT[page]) INIT[page]();
+function start() {
+  if (fileMismatch()) return;
+  if (INIT[page]) INIT[page]();
+  else if (page) reportError(new Error('This page needs assets/timesheet.js uploaded next to assets/app.js.'), 'Page not ready');
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
