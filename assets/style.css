@@ -91,7 +91,8 @@ input, select, textarea {
 }
 input[readonly] { background: #f3f5f8; }
 
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 18px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 18px; align-items: end; }
+.form-grid > div { min-width: 0; }
 .form-grid .wide { grid-column: 1 / -1; }
 
 button {
@@ -146,11 +147,11 @@ td.num, th.num { text-align: right; }
 .cal-nav { display: flex; align-items: center; justify-content: center; gap: 16px; }
 .cal-nav strong { min-width: 11em; text-align: center; font-size: 1.2rem; }
 
-.grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 20px; }
+.grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, .45fr)); gap: 5px; margin-top: 20px; }
 .head { text-align: center; font-weight: 700; }
-.day { min-height: 92px; background: #f8fafc; border: 1px solid #e4eaf2; border-radius: 6px; padding: 6px; font-size: .9rem; }
+.day { min-height: 92px; min-width: 0; overflow: hidden; background: #f8fafc; border: 1px solid #e4eaf2; border-radius: 6px; padding: 6px; font-size: .9rem; }
 .day.blank { background: none; border: 0; }
-.day.off { background: #eef0f4; color: #98a2b3; }
+.day.off { background: #eef0f4; color: #98a2b3; padding: 6px 3px; font-size: .75rem; }
 .day.bank { background: var(--warn-bg); }
 .day.shut { background: var(--danger-bg); }
 .day small { display: block; color: var(--muted); font-size: .7rem; line-height: 1.2; }
@@ -205,10 +206,10 @@ label.check.disabled { color: #98a2b3; cursor: not-allowed; }
 
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
 
-table.editable { min-width: 1500px; }
-table.editable td, table.editable th { padding: 6px 8px; }
-.cell { margin: 0; padding: 6px 8px; min-width: 90px; }
-.cell.num { min-width: 70px; width: 80px; text-align: right; }
+table.editable { width: 100%; min-width: 0; }
+table.editable td, table.editable th { padding: 6px 5px; }
+.cell { margin: 0; padding: 6px 8px; min-width: 0; }
+.cell.num { width: 58px; padding: 6px 2px; text-align: center; }
 tr.dirty td { background: #fff9e6; }
 tr.dirty .cell { border-color: #f5c542; }
 
@@ -230,11 +231,11 @@ fieldset.range legend { padding: 0 6px; font-weight: 700; }
 .tv-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .tv-bar select { width: auto; margin: 0; }
 .tv-months { display: grid; gap: 14px; margin-top: 14px; }
-.tv-months.cols-1 { grid-template-columns: 1fr; }
-.tv-months.cols-2 { grid-template-columns: repeat(2, 1fr); }
-.tv-months.cols-3 { grid-template-columns: repeat(3, 1fr); }
-.tv-months.cols-4 { grid-template-columns: repeat(4, 1fr); }
-.month-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.tv-months.cols-1 { grid-template-columns: minmax(0, 1fr); }
+.tv-months.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tv-months.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tv-months.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.month-card { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
 .month-card h2 { text-align: center; margin: 0 0 6px; }
 .month-card .grid { margin-top: 6px; }
 
@@ -324,3 +325,20 @@ body[data-page^="ts-"] main { max-width: 1600px; }
 body[data-page^="ts-"] .topbar { padding-left: max(20px, calc((100% - 1600px) / 2)); padding-right: max(20px, calc((100% - 1600px) / 2)); }
 table.sheet { min-width: 1100px; }
 table.sheet .cell { min-width: 105px; }
+
+/* ---------- Employees table: compact columns with vertical headers ---------- */
+
+body[data-page="employees"] main { max-width: 1400px; }
+body[data-page="employees"] .topbar { padding-left: max(20px, calc((100% - 1400px) / 2)); padding-right: max(20px, calc((100% - 1400px) / 2)); }
+
+table.editable th.rot { padding: 8px 2px; text-align: center; vertical-align: bottom; width: 1%; }
+table.editable th.rot span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+table.editable td.num, table.editable td.chk { text-align: center; }
+table.editable td.chk input[type="checkbox"] { margin: 0; }
+table.editable input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+table.editable input[type="number"]::-webkit-inner-spin-button,
+table.editable input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+table.editable input[type="date"].cell { min-width: 9.5em; }
+table.editable td.namecell { white-space: nowrap; }
+
+fieldset.range { align-items: end; }

@@ -8,7 +8,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 const DEFAULT_PW = '000000';
 const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
 const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
@@ -93,7 +93,6 @@ const ACTIONS = {
   approve: el => review(el.dataset.id, 'approved'),
   reject: el => review(el.dataset.id, 'rejected'),
   'log-delete': el => deleteLog(el.dataset.id),
-  'role-toggle': el => toggleRole(el.dataset.uid, el.dataset.role),
   'emp-remove': el => removeEmployee(el.dataset.id),
   'save-employees': saveEmployees,
   'sync-names': syncNamesClicked,
@@ -826,6 +825,7 @@ async function initEmployees() {
   ['s1start', 's1end', 's2start', 's2end'].forEach(id => { $(id).onchange = previewShutdown; });
   $('emps').addEventListener('input', onCellEdit);
   $('emps').addEventListener('change', onCellEdit);
+  $('emps').addEventListener('change', onAdminToggle);
   await safeRender();
 }
 
@@ -995,7 +995,7 @@ async function renderEmployees() {
     const self = x.userId === window._me;
     return `
       <tr data-id="${esc(x.id)}">
-        <td>${x.hasName ? `<b>${esc(x.displayName)}</b> <small>${esc(x.initials)}</small>` : `<b class="note--error">(no name)</b> <small>${esc(x.id)}</small>`}${role === 'admin' ? ' <span class="pill admin">admin</span>' : ''}</td>
+        <td class="namecell">${x.hasName ? `<b>${esc(x.displayName)}</b> <small>${esc(x.initials)}</small>` : `<b class="note--error">(no name)</b> <small>${esc(x.id)}</small><br><button type="button" class="small red" data-action="emp-remove" data-id="${esc(x.id)}">Remove record</button>`}</td>
         <td><select class="cell" data-field="team" aria-label="Team">${set.teams.map(tm => `<option${tm === x.team ? ' selected' : ''}>${esc(tm)}</option>`).join('')}</select></td>
         <td><input class="cell" data-field="department" value="${esc(x.department)}" aria-label="Department"></td>
         <td><input class="cell" type="date" data-field="startDate" value="${esc(x.startDate)}" aria-label="Start date"></td>
@@ -1009,11 +1009,8 @@ async function renderEmployees() {
         <td class="num"><b>${fmt(t.available)}</b></td>
         <td class="num">${fmt(t.sickDays)}</td>
         <td class="num ${bfClass(t.bradford)}">${fmt(t.bradford)}</td>
-        <td>${birthdayUsers.has(x.userId) ? 'Used' : '–'}</td>
-        <td>
-          <button type="button" class="small ghost" data-action="role-toggle" data-uid="${esc(x.userId)}" data-role="${role === 'admin' ? 'employee' : 'admin'}"${self || !x.userId ? ' disabled' : ''}>${role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
-          ${x.hasName ? '' : `<button type="button" class="small red" data-action="emp-remove" data-id="${esc(x.id)}">Remove record</button>`}
-        </td>
+        <td class="chk" title="Birthday day ${birthdayUsers.has(x.userId) ? 'used' : 'not used yet'}">${birthdayUsers.has(x.userId) ? '✓' : '–'}</td>
+        <td class="chk"><input type="checkbox" data-admin-uid="${esc(x.userId)}"${role === 'admin' ? ' checked' : ''}${self || !x.userId ? ' disabled' : ''} aria-label="Administrator"></td>
       </tr>`;
   }).join('') || '<tr><td colspan="16" class="empty">No employees found in the employees collection.</td></tr>';
   updateSaveBar();
@@ -1107,8 +1104,16 @@ async function addEmployee(ev) {
   finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
 }
 
+function onAdminToggle(ev) {
+  const el = ev.target.closest('[data-admin-uid]');
+  if (!el) return;
+  const role = el.checked ? 'admin' : 'employee';
+  if (!confirm(`Change this account to "${role}"?`)) { el.checked = !el.checked; return; }
+  toggleRole(el.dataset.adminUid, role);
+}
+
 async function toggleRole(uid, role) {
-  if (!uid || !confirm(`Change this account to "${role}"?`)) return;
+  if (!uid) return;
   try { await db.collection('profiles').doc(uid).update({ role }); await safeRender(); }
   catch (err) { reportError(err, 'Changing role'); }
 }
@@ -1233,8 +1238,10 @@ function monthCells(y, m, entries, rota, set) {
     const shut = inShutdown(k, set);
     const cls = ['day', isWeekend(k) ? 'off' : '', r.bankHoliday ? 'bank' : '', shut ? 'shut' : ''].filter(Boolean).join(' ');
 
+    if (isWeekend(k)) { html += `<div class="${cls}"><b>${d}</b></div>`; continue; }
+
     let tags = '';
-    if (!isWeekend(k) && !r.bankHoliday && !shut) {
+    if (!r.bankHoliday && !shut) {
       if (r.team1Off) tags += '<span class="tag t1">T1 off</span>';
       if (r.team2Off) tags += '<span class="tag t2">T2 off</span>';
     }
@@ -1331,7 +1338,7 @@ function fileMismatch() {
   return true;
 }
 
-document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION} <br> Created by Connor Dennison </footer>`);
+document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION}</footer>`);
 
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
 function start() {
