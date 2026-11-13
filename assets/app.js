@@ -1384,7 +1384,7 @@ function fileMismatch() {
   return true;
 }
 
-document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION}</footer>`);
+document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION} <br> Designed by Connor Dennison </footer>`);
 
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
 function start() {
