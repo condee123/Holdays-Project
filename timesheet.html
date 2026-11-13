@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en-GB">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My timesheet</title>
+  <link rel="stylesheet" href="assets/style.css?v=9">
+</head>
+
+<body data-page="ts-entry">
+  <header class="topbar">
+    <a class="brand" href="home.html">Timesheet Log</a>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
+
+  <main>
+    <h1>My timesheet</h1>
+
+    <section class="card">
+      <div class="week-head">
+        <button type="button" class="ghost" data-action="ts-prev" aria-label="Previous week">←</button>
+        <div class="week-title">
+          <strong id="weekTitle"></strong>
+          <div id="weekSub" class="lead"></div>
+        </div>
+        <button type="button" class="ghost" id="weekNext" data-action="ts-next" aria-label="Next week">→</button>
+        <button type="button" class="ghost small" data-action="ts-now">This week</button>
+      </div>
+      <p>
+        <span id="sheetStatus"></span>
+        <span id="sheetNote" class="lead"></span>
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="table-wrap">
+        <table class="sheet">
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Job No.</th>
+              <th scope="col">Customer</th>
+              <th scope="col">Time Taken</th>
+              <th scope="col">Assigned by</th>
+              <th scope="col" class="chk">Call out</th>
+              <th scope="col" class="chk">No Dinner</th>
+              <th scope="col">Van reg</th>
+              <th scope="col">Extra Comments</th>
+            </tr>
+          </thead>
+          <tbody id="days"></tbody>
+        </table>
+      </div>
+
+      <p class="week-total">Hours entered this week: <b id="weekTotal">0 h</b></p>
+
+      <div class="toolbar">
+        <button type="button" id="submitBtn" data-action="ts-submit">Save &amp; submit for approval</button>
+        <span id="saveInd" class="note" role="status" aria-live="polite"></span>
+      </div>
+      <p id="note" class="note" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js?v=9"></script>
+  <script src="assets/app.js?v=9"></script>
+  <script src="assets/timesheet.js?v=9"></script>
+</body>
+
+</html>
