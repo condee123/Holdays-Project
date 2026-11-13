@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en-GB">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Employees</title>
+  <link rel="stylesheet" href="assets/style.css?v=9">
+</head>
+
+<body data-page="employees">
+  <header class="topbar">
+    <a class="brand" href="employee.html">Holiday Tracker</a>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
+
+  <main>
+    <h1>Employees</h1>
+
+    <section class="card">
+      <h2>Company shutdown dates</h2>
+      <p class="lead">
+        Working days inside these dates come off every employee's allowance for the holiday year
+        (weekends, bank holidays and each team's rest days are not counted). Leave a box blank if there is no shutdown.
+      </p>
+      <form id="shutdownForm">
+        <div class="form-grid">
+          <fieldset class="range">
+            <legend id="s1label">Christmas shutdown 2026–2027</legend>
+            <div>
+              <label for="s1start">First day</label>
+              <input id="s1start" type="date">
+            </div>
+            <div>
+              <label for="s1end">Last day</label>
+              <input id="s1end" type="date">
+            </div>
+          </fieldset>
+          <fieldset class="range">
+            <legend id="s2label">Christmas shutdown 2027–2028</legend>
+            <div>
+              <label for="s2start">First day</label>
+              <input id="s2start" type="date">
+            </div>
+            <div>
+              <label for="s2end">Last day</label>
+              <input id="s2end" type="date">
+            </div>
+          </fieldset>
+        </div>
+        <button type="submit">Save shutdown dates</button>
+        <p id="shutdownInfo" class="note"></p>
+        <p id="shutdownNote" class="note" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Office TV calendar login</h2>
+      <p class="lead">
+        A read-only login called <b>Calendar</b> (password 000000) that shows only the calendar page,
+        with a drop-down for how many months to display. It sees leave initials and dates, nothing else.
+      </p>
+      <button type="button" id="displayBtn" data-action="create-display">Create the Calendar login</button>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Role</th>
+              <th scope="col">Sign-in account</th>
+            </tr>
+          </thead>
+          <tbody id="displayRows"></tbody>
+        </table>
+      </div>
+      <p id="displayInfo" class="note"></p>
+      <ol id="displayLog" class="log"></ol>
+      <p id="displayNote" class="note" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Current employees</h2>
+        <span id="empCount" class="lead"></span>
+      </div>
+      <p class="lead">
+        Change any white box, then press <b>Save changes</b> to update Firestore.
+        Changing a team or start date refills the accrual and long-service figures; you can overwrite them before saving.
+      </p>
+      <div class="toolbar">
+        <button type="button" id="saveAll" data-action="save-employees" disabled>Save changes</button>
+        <button type="button" class="ghost" data-action="sync-names">Refresh sign-in name list</button>
+      </div>
+      <p id="empNote" class="note" role="status" aria-live="polite"></p>
+
+      <div class="table-wrap">
+        <table class="editable">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Team</th>
+              <th scope="col">Department</th>
+              <th scope="col">Start date</th>
+              <th scope="col" class="rot"><span>Allowance</span></th>
+              <th scope="col" class="rot"><span>Carryover</span></th>
+              <th scope="col" class="rot"><span>Accrual</span></th>
+              <th scope="col" class="rot"><span>Long service</span></th>
+              <th scope="col" class="rot"><span>Total</span></th>
+              <th scope="col" class="rot"><span>Shutdown</span></th>
+              <th scope="col" class="rot"><span>Used</span></th>
+              <th scope="col" class="rot"><span>Left</span></th>
+              <th scope="col" class="rot"><span>Sick</span></th>
+              <th scope="col" class="rot"><span>Bradford</span></th>
+              <th scope="col" class="rot"><span>Birthday</span></th>
+              <th scope="col" class="rot"><span>Admin</span></th>
+            </tr>
+          </thead>
+          <tbody id="emps">
+            <tr><td colspan="16" class="empty">Loading employees…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Add employee</h2>
+      <p class="lead">
+        Leave the allowance fields blank to use the company defaults
+        (allowance, bank holiday accrual and long service are worked out from the team and start date).
+      </p>
+      <form id="newEmp">
+        <div class="form-grid">
+          <div>
+            <label for="ename">Full name</label>
+            <input id="ename" required>
+          </div>
+          <div>
+            <label for="eemail">
+              Login email
+              <span class="hint">optional – blank means they sign in by name; a real email allows self-service reset</span>
+            </label>
+            <input id="eemail" type="email">
+          </div>
+          <div>
+            <label for="epw">Temporary password</label>
+            <input id="epw" required minlength="6" value="000000">
+          </div>
+          <div>
+            <label for="erole">Role</label>
+            <select id="erole">
+              <option value="employee">Employee</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div>
+            <label for="edept">Department</label>
+            <input id="edept">
+          </div>
+          <div>
+            <label for="eteam">Team</label>
+            <select id="eteam"></select>
+          </div>
+          <div>
+            <label for="estart">Start date</label>
+            <input id="estart" type="date">
+          </div>
+          <div>
+            <label for="eallow">Annual allowance (days)</label>
+            <input id="eallow" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="ecarry">Carryover days</label>
+            <input id="ecarry" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="eaccr">Bank holiday accrual</label>
+            <input id="eaccr" type="number" step="0.5">
+          </div>
+          <div>
+            <label for="elong">Long service days</label>
+            <input id="elong" type="number" step="0.5">
+          </div>
+        </div>
+        <button type="submit">Create account</button>
+        <p id="addNote" class="note" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js?v=9"></script>
+  <script src="assets/app.js?v=9"></script>
+</body>
+
+</html>
