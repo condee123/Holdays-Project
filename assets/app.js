@@ -8,7 +8,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const TS = () => firebase.firestore.FieldValue.serverTimestamp();
 
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 const DEFAULT_PW = '000000';
 const DISPLAY_NAME = 'Calendar';   // the read-only login used on the office TV
 const homeFor = role => (role === 'admin' ? 'admin.html' : role === 'display' ? 'calendar.html' : 'employee.html');
@@ -96,6 +96,7 @@ const ACTIONS = {
   'emp-remove': el => removeEmployee(el.dataset.id),
   'save-employees': saveEmployees,
   'sync-names': syncNamesClicked,
+  'apply-bh-rules': applyBankHolidayRules,
   'create-display': createDisplayUser
 };
 
@@ -110,6 +111,7 @@ const DEFAULT_SETTINGS = {
   holidayYearStart: '2027-01-01', holidayYearEnd: '2027-12-31',
   initialAllowanceTeams: 28, initialAllowanceFiveDay: 28, bankHolidayCount: 8,
   team1Accrual: 3, team2Accrual: 4,
+  bankHolidayRule: 1,   // 2 = bank holidays come off the allowance on working days, no days in lieu
   leaveTypes: ['Annual Leave', 'Sick Leave', 'Public Holiday', 'Unpaid', 'Other'],
   teams: ['5-Day Week', 'Team 1', 'Team 2']
 };
@@ -196,6 +198,19 @@ function shutdownDays(team, set, rota) {
   return days.size;
 }
 
+// Bank holidays in the holiday year that fall on a day this team normally works.
+// These come off the allowance. One on a rest day costs nothing and earns no day in lieu.
+function bankHolidayDays(team, set, rota) {
+  let n = 0;
+  Object.entries(rota).forEach(([k, r]) => {
+    if (!r.bankHoliday || k < set.holidayYearStart || k > set.holidayYearEnd || isWeekend(k)) return;
+    if (team === 'Team 1' && r.team1Off) return;
+    if (team === 'Team 2' && r.team2Off) return;
+    n++;
+  });
+  return n;
+}
+
 function longServiceDays(start, set) {
   if (!start) return 0;
   const a = new Date(start + 'T12:00:00'), b = new Date(set.holidayYearStart + 'T12:00:00');
@@ -206,9 +221,11 @@ function longServiceDays(start, set) {
 
 function defaultsFor(team, start, set) {
   const initial = team === '5-Day Week' ? set.initialAllowanceFiveDay : set.initialAllowanceTeams;
+  const rules2 = set.bankHolidayRule === 2;
   return {
-    allowanceDays: initial - set.bankHolidayCount,
-    accrualDays: team === 'Team 1' ? set.team1Accrual : team === 'Team 2' ? set.team2Accrual : 0,
+    // New rules: the full allowance, with bank holidays deducted separately. Old rules: bank holidays pre-deducted.
+    allowanceDays: rules2 ? initial : initial - set.bankHolidayCount,
+    accrualDays: rules2 ? 0 : (team === 'Team 1' ? set.team1Accrual : team === 'Team 2' ? set.team2Accrual : 0),
     longServiceDays: longServiceDays(start, set)
   };
 }
@@ -218,16 +235,22 @@ const deducted = r => (r.deduct !== undefined ? r.deduct : r.days);
 
 function summarise(emp, reqs, logs, set, rota) {
   const inYear = d => d >= set.holidayYearStart && d <= set.holidayYearEnd;
+  const rules2 = set.bankHolidayRule === 2;
   const logged = sum(logs.filter(l => l.leaveType === 'Annual Leave' && inYear(l.date)), l => l.days);
   const approved = sum(reqs.filter(r => r.status === 'approved' && inYear(r.startDate)), deducted);
   const pending = sum(reqs.filter(r => r.status === 'pending' && inYear(r.startDate)), deducted);
   const shutdown = shutdownDays(emp.team, set, rota || {});
+  const bank = rules2 ? bankHolidayDays(emp.team, set, rota || {}) : 0;
   const sick = logs.filter(l => l.leaveType === 'Sick Leave');
   const sickDays = sum(sick, l => l.days);
-  const total = emp.allowanceDays + emp.carryoverDays + emp.accrualDays + emp.longServiceDays;
+  // Old rules (before an admin applies the new ones) still add the stored in-lieu days
+  const total = emp.allowanceDays + emp.carryoverDays + emp.longServiceDays + (rules2 ? 0 : emp.accrualDays);
+  const booked = logged + approved;
+  const used = booked + shutdown + bank;
   return {
-    total, booked: logged + approved, shutdown, used: logged + approved + shutdown, pending,
-    available: total - logged - approved - shutdown - pending,
+    total, booked, shutdown, bank, used, pending,
+    available: total - used - pending,
+    rules2, accrual: rules2 ? 0 : emp.accrualDays,
     sickDays, bradford: sick.length * sick.length * sickDays
   };
 }
@@ -650,10 +673,12 @@ async function initEmployee() {
   $('tiles').innerHTML = `
     <div class="tile primary"><div class="label">Available to book</div><div class="value">${fmt(t.available)}</div></div>
     <div class="tile"><div class="label">Total entitlement</div><div class="value">${fmt(t.total)}</div></div>
-    <div class="tile"><div class="label">Used (incl. shutdown)</div><div class="value">${fmt(t.used)}</div></div>
-    <div class="tile"><div class="label">Awaiting approval</div><div class="value">${fmt(t.pending)}</div></div>
-    <div class="tile"><div class="label">Company shutdown</div><div class="value">${fmt(t.shutdown)}</div></div>`;
-  $('breakdown').textContent = `Entitlement = annual allowance ${fmt(e.allowanceDays)} + carryover ${fmt(e.carryoverDays)} + bank holiday accrual ${fmt(e.accrualDays)} + long service ${fmt(e.longServiceDays)}. Used = ${fmt(t.booked)} booked + ${fmt(t.shutdown)} company shutdown. Sick days recorded: ${fmt(t.sickDays)} · Bradford Factor: ${fmt(t.bradford)}.`;
+    <div class="tile"><div class="label">Total days used</div><div class="value">${fmt(t.used)}</div></div>
+    <div class="tile"><div class="label">Holidays booked</div><div class="value">${fmt(t.booked)}</div></div>
+    <div class="tile"><div class="label">Bank holidays</div><div class="value">${fmt(t.bank)}</div></div>
+    <div class="tile"><div class="label">Company shutdown</div><div class="value">${fmt(t.shutdown)}</div></div>
+    <div class="tile"><div class="label">Awaiting approval</div><div class="value">${fmt(t.pending)}</div></div>`;
+  $('breakdown').textContent = `Entitlement = annual allowance ${fmt(e.allowanceDays)} + carryover ${fmt(e.carryoverDays)} + long service ${fmt(e.longServiceDays)}${t.rules2 ? '' : ' + bank holiday accrual ' + fmt(t.accrual)}. Total days used = ${fmt(t.booked)} holidays booked + ${fmt(t.bank)} bank holidays + ${fmt(t.shutdown)} company shutdown. Sick days recorded: ${fmt(t.sickDays)} · Bradford Factor: ${fmt(t.bradford)}.`;
 
   $('rows').innerHTML = reqs.length ? reqs.map(x => `
     <tr>
@@ -943,11 +968,33 @@ async function createDisplayUser() {
   } finally { try { await sec.auth().signOut(); await sec.delete(); } catch (_) { /* ignore */ } }
 }
 
+// One-off update to the new bank holiday rules: allowances go back to the full figure
+// (old figure + the bank holidays that were pre-deducted) and days in lieu are cleared.
+async function applyBankHolidayRules() {
+  const set = await getSettings();
+  if (set.bankHolidayRule === 2) return;
+  if (!confirm(`Update everyone to the new bank holiday rules?\n\nEach annual allowance goes up by ${set.bankHolidayCount} (the bank holidays that were already deducted) and bank holiday accrual is set to 0. Bank holidays are then deducted per person on the days they work.`)) return;
+  say('ruleNote', 'Updating…');
+  try {
+    const snap = await db.collection('employees').get();
+    const people = snap.docs.map(d => normEmp(d.id, d.data())).filter(x => x.hasName);
+    for (let i = 0; i < people.length; i += 400) {
+      const batch = db.batch();
+      people.slice(i, i + 400).forEach(x => batch.update(db.collection('employees').doc(x.id), { allowanceDays: x.allowanceDays + set.bankHolidayCount, accrualDays: 0 }));
+      await batch.commit();
+    }
+    await db.doc('settings/company').set({ bankHolidayRule: 2, team1Accrual: 0, team2Accrual: 0, updatedAt: TS() }, { merge: true });
+    _settings = null;
+    say('ruleNote', `Done. ${people.length} employees updated.`, 'ok');
+    await safeRender();
+  } catch (err) { say('ruleNote', 'Could not update: ' + (err.code || err.message), 'error'); reportError(err, 'Bank holiday rules'); }
+}
+
 // Wraps renderEmployees so a failure shows a message instead of leaving "Loading employees…" forever
 async function safeRender() {
   try { await renderEmployees(); }
   catch (err) {
-    $('emps').innerHTML = `<tr><td colspan="16" class="note--error">Could not show the employees: ${esc(err.message)}</td></tr>`;
+    $('emps').innerHTML = `<tr><td colspan="17" class="note--error">Could not show the employees: ${esc(err.message)}</td></tr>`;
     reportError(err, 'Employees table');
   }
 }
@@ -970,7 +1017,7 @@ async function renderEmployees() {
       db.collection('birthdayUse').get()
     ]);
   } catch (err) {
-    $('emps').innerHTML = `<tr><td colspan="16" class="note--error">Could not load employees: ${esc(err.message)}</td></tr>`;
+    $('emps').innerHTML = `<tr><td colspan="17" class="note--error">Could not load employees: ${esc(err.message)}</td></tr>`;
     reportError(err, 'Employees');
     return;
   }
@@ -978,6 +1025,7 @@ async function renderEmployees() {
   ROTA_CACHE = rota;
   fillShutdownForm(set);
   previewShutdown();
+  $('ruleCard').hidden = set.bankHolidayRule === 2;
 
   EMPS = es.docs.map(d => normEmp(d.id, d.data())).sort(byName);
   const reqs = rs.docs.map(d => d.data());
@@ -1001,18 +1049,19 @@ async function renderEmployees() {
         <td><input class="cell" type="date" data-field="startDate" value="${esc(x.startDate)}" aria-label="Start date"></td>
         ${num('allowanceDays', x.allowanceDays)}
         ${num('carryoverDays', x.carryoverDays)}
-        ${num('accrualDays', x.accrualDays)}
         ${num('longServiceDays', x.longServiceDays)}
         <td class="num"><b>${fmt(t.total)}</b></td>
         <td class="num">${fmt(t.shutdown)}</td>
-        <td class="num">${fmt(t.used)}</td>
+        <td class="num">${fmt(t.bank)}</td>
+        <td class="num">${fmt(t.booked)}</td>
+        <td class="num"><b>${fmt(t.used)}</b></td>
         <td class="num"><b>${fmt(t.available)}</b></td>
         <td class="num">${fmt(t.sickDays)}</td>
         <td class="num ${bfClass(t.bradford)}">${fmt(t.bradford)}</td>
         <td class="chk" title="Birthday day ${birthdayUsers.has(x.userId) ? 'used' : 'not used yet'}">${birthdayUsers.has(x.userId) ? '✓' : '–'}</td>
         <td class="chk"><input type="checkbox" data-admin-uid="${esc(x.userId)}"${role === 'admin' ? ' checked' : ''}${self || !x.userId ? ' disabled' : ''} aria-label="Administrator"></td>
       </tr>`;
-  }).join('') || '<tr><td colspan="16" class="empty">No employees found in the employees collection.</td></tr>';
+  }).join('') || '<tr><td colspan="17" class="empty">No employees found in the employees collection.</td></tr>';
   updateSaveBar();
 }
 
@@ -1036,7 +1085,6 @@ function onCellEdit(ev) {
   if (ev.type === 'change' && field === 'team') {
     const d = defaultsFor(el.value, get('startDate').value, set);
     get('allowanceDays').value = d.allowanceDays;
-    get('accrualDays').value = d.accrualDays;
   }
   row.classList.add('dirty');
   updateSaveBar();
@@ -1048,7 +1096,7 @@ async function saveEmployees() {
   const batch = db.batch();
   for (const row of rows) {
     const v = f => row.querySelector(`[data-field="${f}"]`).value;
-    const nums = ['allowanceDays', 'carryoverDays', 'accrualDays', 'longServiceDays'];
+    const nums = ['allowanceDays', 'carryoverDays', 'longServiceDays'];
     const upd = { department: v('department').trim(), team: v('team'), startDate: v('startDate') || null };
     for (const f of nums) {
       const n = parseFloat(v(f));
@@ -1091,7 +1139,7 @@ async function addEmployee(ev) {
     batch.set(db.collection('employees').doc(uid), {
       userId: uid, displayName: name, initials, department: $('edept').value.trim(), team, startDate: start,
       allowanceDays: num('eallow', d.allowanceDays), carryoverDays: num('ecarry', 0),
-      accrualDays: num('eaccr', d.accrualDays), longServiceDays: num('elong', d.longServiceDays),
+      accrualDays: d.accrualDays, longServiceDays: num('elong', d.longServiceDays),
       active: true, createdAt: TS()
     });
     batch.set(db.collection('loginDirectory').doc(uid), { displayName: name, emailLogin: !!$('eemail').value.trim() });
@@ -1245,8 +1293,6 @@ function monthCells(y, m, entries, rota, set) {
       if (r.team1Off) tags += '<span class="tag t1">T1 off</span>';
       if (r.team2Off) tags += '<span class="tag t2">T2 off</span>';
     }
-    if (r.bankHoliday && r.team1Accrued) tags += '<span class="tag accrue">+1 T1</span>';
-    if (r.bankHoliday && r.team2Accrued) tags += '<span class="tag accrue">+1 T2</span>';
     if (shut) tags += '<span class="tag">Shutdown</span>';
 
     const chips = entries.filter(x => x.startDate <= k && x.endDate >= k)
@@ -1338,7 +1384,7 @@ function fileMismatch() {
   return true;
 }
 
-document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION} <br> Created by Connor Dennison </footer>`);
+document.body.insertAdjacentHTML('beforeend', `<footer class="ver">Version ${APP_VERSION}</footer>`);
 
 const INIT = { login: initLogin, change: initChange, employee: initEmployee, admin: initAdmin, employees: initEmployees, log: initLog, calendar: initCalendar };
 function start() {
