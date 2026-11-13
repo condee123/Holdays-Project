@@ -342,3 +342,7 @@ table.editable input[type="date"].cell { min-width: 9.5em; }
 table.editable td.namecell { white-space: nowrap; }
 
 fieldset.range { align-items: end; }
+
+/* Department box kept small so the columns at the end have room */
+table.editable td:nth-child(3) .cell { width: 6em; }
+table.editable td:nth-child(2) .cell { width: 8em; }
