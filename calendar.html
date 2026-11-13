@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en-GB">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Company calendar</title>
+  <link rel="stylesheet" href="assets/style.css?v=9">
+</head>
+
+<body data-page="calendar">
+  <header class="topbar">
+    <a class="brand" href="employee.html">Holiday Tracker</a>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
+
+  <main>
+    <!-- Staff view -->
+    <div id="staffView">
+      <h1>Company calendar</h1>
+      <p class="lead">Approved leave is shown in blue, pending leave in red. Rota days come from the 4-day week rota.</p>
+
+      <section class="card">
+        <div class="cal-nav">
+          <button type="button" class="ghost" data-action="cal-prev" aria-label="Previous month">←</button>
+          <strong id="month"></strong>
+          <button type="button" class="ghost" data-action="cal-next" aria-label="Next month">→</button>
+        </div>
+        <p id="calnote" class="note" role="status" aria-live="polite"></p>
+        <div id="grid" class="grid"></div>
+
+        <p class="legend">
+          <span><i class="swatch" style="background:#d9e6ff"></i>Team 1 off</span>
+          <span><i class="swatch" style="background:#e5f6dc"></i>Team 2 off</span>
+          <span><i class="swatch" style="background:#eef0f4"></i>Weekend</span>
+          <span><i class="swatch" style="background:#fff4d6"></i>Bank holiday</span>
+          <span><i class="swatch" style="background:#ffd9a8"></i>+1 accrued day</span>
+          <span><i class="swatch" style="background:#fde7e7"></i>Company shutdown</span>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Bank holidays</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Holiday</th>
+              </tr>
+            </thead>
+            <tbody id="bhRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Office TV view (shown only to the "Calendar" display login) -->
+    <div id="tvView" hidden>
+      <div class="tv-bar">
+        <label for="months">Months to show</label>
+        <select id="months"></select>
+        <span id="tvNote" class="note" role="status" aria-live="polite"></span>
+      </div>
+      <div id="tvMonths" class="tv-months cols-3"></div>
+
+      <p class="legend">
+        <span><i class="swatch" style="background:#2457d6"></i>Approved leave</span>
+        <span><i class="swatch" style="background:#fde7e7"></i>Pending leave / shutdown</span>
+        <span><i class="swatch" style="background:#d9e6ff"></i>Team 1 off</span>
+        <span><i class="swatch" style="background:#e5f6dc"></i>Team 2 off</span>
+        <span><i class="swatch" style="background:#fff4d6"></i>Bank holiday</span>
+      </p>
+    </div>
+  </main>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="assets/config.js?v=9"></script>
+  <script src="assets/app.js?v=9"></script>
+</body>
+
+</html>
