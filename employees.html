@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Employees</title>
-  <link rel="stylesheet" href="assets/style.css?v=9">
+  <link rel="stylesheet" href="assets/style.css?v=10">
 </head>
 
 <body data-page="employees">
@@ -16,6 +16,18 @@
 
   <main>
     <h1>Employees</h1>
+
+    <section class="card" id="ruleCard" hidden>
+      <h2>Apply the new bank holiday rules</h2>
+      <p class="lead">
+        Bank holidays now come off each person's allowance only when they fall on a day that person normally works,
+        and nobody earns a day in lieu for one on a rest day. This one-off update adds the bank holidays back into every
+        annual allowance (for example 20 becomes 28) and sets bank holiday accrual to 0. Everyone's remaining days stay
+        the same as before, because the bank holidays are now deducted in the new Bank holidays column instead.
+      </p>
+      <button type="button" data-action="apply-bh-rules">Apply the new rules</button>
+      <p id="ruleNote" class="note" role="status" aria-live="polite"></p>
+    </section>
 
     <section class="card">
       <h2>Company shutdown dates</h2>
@@ -85,7 +97,7 @@
       </div>
       <p class="lead">
         Change any white box, then press <b>Save changes</b> to update Firestore.
-        Changing a team or start date refills the accrual and long-service figures; you can overwrite them before saving.
+        Changing the start date refills the long-service days, and changing the team refills the allowance; you can overwrite them before saving. Bank holidays are worked out from the rota, and Total days used = holidays booked + bank holidays + shutdown.
       </p>
       <div class="toolbar">
         <button type="button" id="saveAll" data-action="save-employees" disabled>Save changes</button>
@@ -103,11 +115,12 @@
               <th scope="col">Start date</th>
               <th scope="col" class="rot"><span>Allowance</span></th>
               <th scope="col" class="rot"><span>Carryover</span></th>
-              <th scope="col" class="rot"><span>Accrual</span></th>
               <th scope="col" class="rot"><span>Long service</span></th>
               <th scope="col" class="rot"><span>Total</span></th>
               <th scope="col" class="rot"><span>Shutdown</span></th>
-              <th scope="col" class="rot"><span>Used</span></th>
+              <th scope="col" class="rot"><span>Bank holidays</span></th>
+              <th scope="col" class="rot"><span>Holidays booked</span></th>
+              <th scope="col" class="rot"><span>Total days used</span></th>
               <th scope="col" class="rot"><span>Left</span></th>
               <th scope="col" class="rot"><span>Sick</span></th>
               <th scope="col" class="rot"><span>Bradford</span></th>
@@ -116,7 +129,7 @@
             </tr>
           </thead>
           <tbody id="emps">
-            <tr><td colspan="16" class="empty">Loading employees…</td></tr>
+            <tr><td colspan="17" class="empty">Loading employees…</td></tr>
           </tbody>
         </table>
       </div>
@@ -126,7 +139,7 @@
       <h2>Add employee</h2>
       <p class="lead">
         Leave the allowance fields blank to use the company defaults
-        (allowance, bank holiday accrual and long service are worked out from the team and start date).
+        (allowance and long service are worked out from the team and start date).
       </p>
       <form id="newEmp">
         <div class="form-grid">
@@ -173,10 +186,6 @@
             <input id="ecarry" type="number" step="0.5">
           </div>
           <div>
-            <label for="eaccr">Bank holiday accrual</label>
-            <input id="eaccr" type="number" step="0.5">
-          </div>
-          <div>
             <label for="elong">Long service days</label>
             <input id="elong" type="number" step="0.5">
           </div>
@@ -190,8 +199,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-  <script src="assets/config.js?v=9"></script>
-  <script src="assets/app.js?v=9"></script>
+  <script src="assets/config.js?v=10"></script>
+  <script src="assets/app.js?v=10"></script>
 </body>
 
 </html>
